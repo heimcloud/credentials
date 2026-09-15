@@ -1,0 +1,17 @@
+{
+  "name": "heimcloud-credentials-provisioner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claim shop provisioning jobs and create per-customer Gitea credential repos (stubs only)",
+  "bin": {
+    "heimcloud-credentials-provisioner": "./run.mjs"
+  },
+  "scripts": {
+    "once": "node run.mjs --once",
+    "dry-run": "node run.mjs --once --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,6 @@
+result
+.env
+**/.env
+node_modules/
+*.token
+*.sqlite
