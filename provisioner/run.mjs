@@ -5,23 +5,34 @@
  *   node provisioner/run.mjs --once
  *   node provisioner/run.mjs --once --dry-run
  *
- * Env:
- *   SHOP_BASE_URL              default https://shop.heimcloud.site
- *   PROVISIONING_API_TOKEN     shop internal API token (Bearer)
- *   GITEA_BASE_URL             default https://git.heimcloud.site
- *   GITEA_TOKEN                Gitea API token
- *   GITEA_ORG_CUSTOMERS        default customers
- *   GITEA_ORG_HEIM             default heimcloud (reserved)
+ * Creates private Gitea repos customers/<repo_slug> (legacy customer-1
+ * keeps customers/customer-1). Attaches a read-only deploy key when a
+ * Neo SSH public key is present. Never flips repos public. Never touches agwanti.
  */
 
-import { listJobs, claimJob, completeJob, failJob } from "./lib/shop.mjs";
+import {
+  listJobs,
+  claimJob,
+  completeJob,
+  failJob,
+  getCustomer,
+  patchCustomerDeployKeyId,
+} from "./lib/shop.mjs";
 import {
   ensurePrivateRepo,
   writeStubFiles,
   repoUrlFor,
-  assertSafeCustomerId,
+  attachOrRotateDeployKey,
 } from "./lib/gitea.mjs";
 import { normalizeServices, buildRepoFiles } from "./lib/stubs.mjs";
+import { extractNeoSshPublicKey } from "./lib/pubkey.mjs";
+import {
+  assertSafeCustomerId,
+  extractShopRepoSlug,
+  generateRepoSlug,
+  isLegacyNumericCustomer,
+  resolveRepoName,
+} from "./lib/slug.mjs";
 
 function parseArgs(argv) {
   const flags = new Set(argv.slice(2));
@@ -36,56 +47,152 @@ function log(...args) {
   console.log(new Date().toISOString(), ...args);
 }
 
+async function resolveSlugForJob(job, customerId) {
+  let slug = extractShopRepoSlug(job);
+  if (slug) return slug;
+  try {
+    const data = await getCustomer(customerId);
+    slug = extractShopRepoSlug(data.customer || data);
+    if (slug) return slug;
+  } catch (err) {
+    log(`shop GET customer ${customerId}: ${err.message}`);
+  }
+  if (isLegacyNumericCustomer(customerId)) return null;
+  const minted = generateRepoSlug(10);
+  log(`minted fallback repo_slug=${minted} for customer ${customerId}`);
+  return minted;
+}
+
 async function processJob(job, { dryRun }) {
   const customerId = job.customer_id;
   assertSafeCustomerId(customerId);
   const email = job.email || job.payload?.email || null;
   const services = normalizeServices(job.payload || {});
-  const repoName = `customer-${customerId}`;
-  const repoUrl = repoUrlFor(customerId);
+
+  let repoSlug = extractShopRepoSlug(job);
+  if (!dryRun && !repoSlug && !isLegacyNumericCustomer(customerId)) {
+    repoSlug = await resolveSlugForJob(job, customerId);
+  }
+  if (dryRun && !repoSlug && !isLegacyNumericCustomer(customerId)) {
+    repoSlug = extractShopRepoSlug(job) || generateRepoSlug(10);
+  }
+
+  const repoName = resolveRepoName({ customerId, repoSlug });
+  const repoUrl = repoUrlFor({ customerId, repoSlug, repoName });
+  const pubkey = extractNeoSshPublicKey(job);
 
   log(
-    `job #${job.id} customer=${customerId} email=${email} services=${services.join(",") || "(all stubs)"}`,
+    `job #${job.id} customer=${customerId} slug=${repoSlug || "(legacy)"} repo=${repoName} email=${email} services=${services.join(",") || "(all stubs)"} has_key=${Boolean(pubkey)}`,
   );
 
   if (dryRun) {
-    const files = buildRepoFiles({ customerId, email, job, services });
+    const files = buildRepoFiles({
+      customerId,
+      email,
+      job,
+      services,
+      repoSlug,
+      repoName,
+    });
     log(`[dry-run] would claim job #${job.id}`);
     log(`[dry-run] would ensure private repo ${repoUrl}`);
     log(`[dry-run] would write files: ${files.map((f) => f.path).join(", ")}`);
-    log(`[dry-run] would complete with result_json.repo_url=${repoUrl}`);
-    return { dryRun: true, repo_url: repoUrl, files: files.map((f) => f.path) };
+    if (pubkey) {
+      log(`[dry-run] would attach read-only deploy key neo-customer-${customerId}`);
+    } else {
+      log(`[dry-run] no neo_ssh_public_key — deploy_key_attached=false`);
+    }
+    return {
+      dryRun: true,
+      repo_url: repoUrl,
+      repo_name: repoName,
+      repo_slug: repoSlug,
+      deploy_key_attached: Boolean(pubkey),
+      files: files.map((f) => f.path),
+    };
   }
 
   const claimed = await claimJob(job.id, { worker: "credentials" });
-  log(`claimed job #${job.id}`, claimed.job?.status || "claimed");
+  const claimedJob = claimed.job || job;
+  log(`claimed job #${job.id}`, claimedJob.status || "claimed");
+
+  repoSlug = extractShopRepoSlug(claimedJob) || repoSlug;
+  if (!repoSlug && !isLegacyNumericCustomer(customerId)) {
+    repoSlug = await resolveSlugForJob(claimedJob, customerId);
+  }
+  const liveRepoName = resolveRepoName({ customerId, repoSlug });
+  const livePubkey = extractNeoSshPublicKey(claimedJob) || pubkey;
 
   try {
     const repo = await ensurePrivateRepo({
       customerId,
+      repoSlug,
+      repoName: liveRepoName,
       description: `Stub credentials for ${email || `customer ${customerId}`} (Heimcloud)`,
     });
     log(
-      `repo ${repo.created ? "created" : "exists"}: ${repo.html_url || repoUrl}`,
+      `repo ${repo.created ? "created" : "exists"}: ${repo.html_url || repoUrlFor({ repoName: liveRepoName })}`,
     );
 
-    const files = buildRepoFiles({ customerId, email, job, services });
-    await writeStubFiles(customerId, files);
-    log(`wrote ${files.length} stub files to ${repoName}`);
+    const files = buildRepoFiles({
+      customerId,
+      email,
+      job: claimedJob,
+      services,
+      repoSlug,
+      repoName: liveRepoName,
+    });
+    await writeStubFiles(liveRepoName, files);
+    log(`wrote ${files.length} stub files to ${liveRepoName}`);
+
+    let deploy_key_attached = false;
+    let gitea_deploy_key_id = null;
+    let deploy_key_fingerprint = null;
+    let notes = `credentials repo ${liveRepoName}`;
+
+    if (livePubkey) {
+      const attached = await attachOrRotateDeployKey({
+        customerId,
+        repoName: liveRepoName,
+        repoSlug,
+        publicKey: livePubkey,
+      });
+      deploy_key_attached = true;
+      gitea_deploy_key_id = attached.id ?? null;
+      deploy_key_fingerprint = attached.fingerprint || null;
+      notes = `credentials repo ${liveRepoName}; deploy key ${attached.title} id=${gitea_deploy_key_id}`;
+      log(
+        `deploy key attached title=${attached.title} id=${gitea_deploy_key_id} read_only=true`,
+      );
+      try {
+        await patchCustomerDeployKeyId(customerId, gitea_deploy_key_id);
+        log(`patched Shop gitea_deploy_key_id=${gitea_deploy_key_id}`);
+      } catch (patchErr) {
+        log(`Shop PATCH gitea_deploy_key_id: ${patchErr.message}`);
+      }
+    } else {
+      notes = `credentials repo ${liveRepoName}; awaiting neo_ssh_public_key`;
+      log("no neo_ssh_public_key — deploy_key_attached=false");
+    }
 
     const result_json = {
-      repo_url: repo.clone_url || repoUrl,
+      repo_url: repo.clone_url || repoUrlFor({ repoName: liveRepoName }),
       html_url: repo.html_url || null,
-      repo_name: repoName,
+      ssh_url: repo.ssh_url || null,
+      repo_name: liveRepoName,
+      repo_slug: repoSlug,
+      legacy_path: isLegacyNumericCustomer(customerId),
       org: process.env.GITEA_ORG_CUSTOMERS || "customers",
-      services: services.length ? services : ["hermes", "backups", "airvpn", "public_ip"],
+      services: services.length
+        ? services
+        : ["hermes", "backups", "airvpn", "public_ip"],
       stub: true,
+      deploy_key_attached,
+      gitea_deploy_key_id,
+      deploy_key_fingerprint,
     };
 
-    const done = await completeJob(job.id, {
-      notes: `credentials repo ${repoName}`,
-      result_json,
-    });
+    const done = await completeJob(job.id, { notes, result_json });
     log(`completed job #${job.id}`, done.job?.status || "done");
     return result_json;
   } catch (err) {
@@ -105,11 +212,13 @@ async function main() {
     console.log(`Usage: node provisioner/run.mjs [--once] [--dry-run]
 
 Claim pending shop provisioning jobs and create private Gitea
-customer-<id> repos with stub credential files only.
+customers/<repo_slug> repos (legacy customer-1 → customers/customer-1)
+with stub credential files and an optional read-only Neo deploy key.
 
 Environment:
-  SHOP_BASE_URL, PROVISIONING_API_TOKEN
-  GITEA_BASE_URL, GITEA_TOKEN, GITEA_ORG_CUSTOMERS
+  SHOP_BASE_URL, PROVISIONING_API_TOKEN, PROVISIONING_API_TOKEN_FILE
+  GITEA_BASE_URL, GITEA_TOKEN, GITEA_TOKEN_FILE, GITEA_ORG_CUSTOMERS
+  NEO_SSH_PUBLIC_KEY, NEO_SSH_PUBLIC_KEY_FILE, TEST_NEO_SSH_PUBLIC_KEY
 `);
     process.exit(0);
   }
@@ -127,11 +236,14 @@ Environment:
       jobs = [
         {
           id: 0,
-          customer_id: 999001,
+          customer_id: 2,
+          repo_slug: generateRepoSlug(10),
           order_id: null,
           job_type: "provision_stub",
           status: "pending",
           email: "demo+dry-run@heimcloud.site",
+          has_ssh_key: false,
+          neo_ssh_public_key: null,
           payload: {
             email: "demo+dry-run@heimcloud.site",
             services: ["hermes", "backups", "airvpn", "public_ip"],
@@ -150,7 +262,6 @@ Environment:
     return;
   }
 
-  // Process first pending job in --once mode
   const job = jobs[0];
   const result = await processJob(job, opts);
   log("result", JSON.stringify(result));

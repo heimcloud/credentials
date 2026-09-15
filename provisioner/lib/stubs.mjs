@@ -49,16 +49,26 @@ export function normalizeServices(payload) {
   return [...new Set(list.map(String).filter((id) => KNOWN.has(id)))];
 }
 
-export function buildRepoFiles({ customerId, email, job, services }) {
+export function buildRepoFiles({
+  customerId,
+  email,
+  job,
+  services,
+  repoSlug,
+  repoName,
+} = {}) {
   const now = new Date().toISOString();
   const svc = services.length ? services : [...KNOWN];
   const files = [];
+  const name = repoName || repoSlug || `customer-${customerId}`;
 
   files.push({
     path: "README.md",
-    content: `# Customer credentials — customer-${customerId}
+    content: `# Customer credentials — ${name}
 
-Private Heimcloud credentials repo for **${email || "unknown"}** (customer id \`${customerId}\`).
+Private Heimcloud credentials repo for **${email || "unknown"}** (customer id \`${customerId}\`${repoSlug ? `; repo_slug \`${repoSlug}\`` : ""}).
+
+Access is a **read-only Gitea deploy key** from the customer Neo SSH public key. Repos stay private.
 
 ## Layout
 - \`hermes/token.stub\` — Hermes / xAI (later)
@@ -87,6 +97,8 @@ Job #${job?.id ?? "?"} · ${now}
       JSON.stringify(
         {
           customer_id: customerId,
+          repo_slug: repoSlug || null,
+          repo_name: name,
           email: email || null,
           job_id: job?.id ?? null,
           job_type: job?.job_type ?? null,

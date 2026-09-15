@@ -1,6 +1,15 @@
 /**
- * Gitea API helpers — create private customer credential repos with stubs.
+ * Gitea API helpers — private customer credential repos, stubs, deploy keys.
+ * Repos are ALWAYS private. Never flip visibility to public.
  */
+import { readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  assertSafeCustomerId,
+  resolveRepoName,
+  deployKeyTitle,
+  isManagedDeployKeyTitle,
+} from "./slug.mjs";
 
 function giteaBase() {
   return (process.env.GITEA_BASE_URL || "https://git.heimcloud.site").replace(
@@ -13,31 +22,39 @@ function orgCustomers() {
   return process.env.GITEA_ORG_CUSTOMERS || "customers";
 }
 
+/** GITEA_TOKEN env, else contents of GITEA_TOKEN_FILE. Never log the value. */
 function token() {
-  return process.env.GITEA_TOKEN || "";
-}
-
-/** Never create repos for production customer slug agwanti. */
-export function assertSafeCustomerId(customerId) {
-  const id = String(customerId);
-  const lower = id.toLowerCase();
-  if (lower === "agwanti" || lower.includes("agwanti")) {
-    throw new Error("refusing to provision for production customer agwanti");
+  const env = (process.env.GITEA_TOKEN || "").trim();
+  if (env) return env;
+  const file = (process.env.GITEA_TOKEN_FILE || "").trim();
+  if (file) {
+    if (!existsSync(file)) {
+      throw new Error("GITEA_TOKEN_FILE path does not exist");
+    }
+    return readFileSync(file, "utf8").trim();
   }
-  return id;
+  return "";
 }
 
-export function repoNameForCustomer(customerId) {
-  return `customer-${assertSafeCustomerId(customerId)}`;
+export function repoUrlFor({ customerId, repoSlug, repoName } = {}) {
+  const name = repoName || resolveRepoName({ customerId, repoSlug });
+  return `${giteaBase()}/${orgCustomers()}/${name}.git`;
 }
 
-export function repoUrlFor(customerId) {
-  return `${giteaBase()}/${orgCustomers()}/${repoNameForCustomer(customerId)}.git`;
+/** OpenSSH SHA256 fingerprint of the public key blob (not the private key). */
+export function sshPublicKeyFingerprintSha256(publicKey) {
+  const parts = String(publicKey).trim().split(/\s+/);
+  if (parts.length < 2) {
+    throw new Error("invalid OpenSSH public key");
+  }
+  const blob = Buffer.from(parts[1], "base64");
+  const digest = createHash("sha256").update(blob).digest();
+  return `SHA256:${digest.toString("base64").replace(/=+$/, "")}`;
 }
 
 async function api(method, path, body) {
   const t = token();
-  if (!t) throw new Error("GITEA_TOKEN is required");
+  if (!t) throw new Error("GITEA_TOKEN (or GITEA_TOKEN_FILE) is required");
   const url = `${giteaBase()}/api/v1${path}`;
   const res = await fetch(url, {
     method,
@@ -58,9 +75,18 @@ async function api(method, path, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
-export async function ensurePrivateRepo({ customerId, description }) {
+/**
+ * Ensure a private repo exists. Never sends private:false.
+ * New customers use Crockford repo_slug; customer id 1 stays customer-1.
+ */
+export async function ensurePrivateRepo({
+  customerId,
+  repoSlug,
+  repoName,
+  description,
+}) {
   const org = orgCustomers();
-  const name = repoNameForCustomer(customerId);
+  const name = repoName || resolveRepoName({ customerId, repoSlug });
   const get = await api("GET", `/repos/${org}/${name}`);
   if (get.ok) {
     return {
@@ -68,6 +94,8 @@ export async function ensurePrivateRepo({ customerId, description }) {
       repo: get.data,
       html_url: get.data.html_url,
       clone_url: get.data.clone_url,
+      ssh_url: get.data.ssh_url,
+      repo_name: name,
     };
   }
   if (get.status !== 404) {
@@ -93,13 +121,16 @@ export async function ensurePrivateRepo({ customerId, description }) {
     repo: created.data,
     html_url: created.data.html_url,
     clone_url: created.data.clone_url,
+    ssh_url: created.data.ssh_url,
+    repo_name: name,
   };
 }
 
 /** Create or update a single file via contents API. */
-export async function putFile({ customerId, path, content, message }) {
+export async function putFile({ repoName, path, content, message }) {
   const org = orgCustomers();
-  const name = repoNameForCustomer(customerId);
+  const name = repoName;
+  if (!name) throw new Error("putFile requires repoName");
   const encPath = path
     .split("/")
     .map(encodeURIComponent)
@@ -139,11 +170,11 @@ export async function putFile({ customerId, path, content, message }) {
   return cre.data;
 }
 
-export async function writeStubFiles(customerId, files) {
+export async function writeStubFiles(repoName, files) {
   const results = [];
   for (const f of files) {
-    const r = await putFile({
-      customerId,
+    await putFile({
+      repoName,
       path: f.path,
       content: f.content,
       message: `chore: provision stub ${f.path}`,
@@ -153,4 +184,85 @@ export async function writeStubFiles(customerId, files) {
   return results;
 }
 
-export { giteaBase, orgCustomers };
+export async function listDeployKeys(owner, repo) {
+  const res = await api("GET", `/repos/${owner}/${repo}/keys`);
+  if (res.status === 404) return [];
+  if (!res.ok) {
+    throw new Error(
+      `gitea list deploy keys ${owner}/${repo}: ${res.status} ${JSON.stringify(res.data)}`,
+    );
+  }
+  return Array.isArray(res.data) ? res.data : [];
+}
+
+/**
+ * Add a read-only deploy key. read_only is always true regardless of caller.
+ */
+export async function addDeployKey(owner, repo, { title, key, read_only = true } = {}) {
+  const res = await api("POST", `/repos/${owner}/${repo}/keys`, {
+    title,
+    key: String(key).trim(),
+    read_only: true,
+  });
+  if (!res.ok) {
+    throw new Error(
+      `gitea add deploy key ${owner}/${repo}: ${res.status} ${JSON.stringify(res.data)}`,
+    );
+  }
+  return res.data;
+}
+
+export async function deleteDeployKey(owner, repo, id) {
+  const res = await api("DELETE", `/repos/${owner}/${repo}/keys/${id}`);
+  if (!res.ok && res.status !== 404) {
+    throw new Error(
+      `gitea delete deploy key ${owner}/${repo}#${id}: ${res.status} ${JSON.stringify(res.data)}`,
+    );
+  }
+  return true;
+}
+
+/**
+ * Rotate Heimcloud-managed deploy keys (title prefix neo-customer-<id> or neo-)
+ * then add a new read-only key titled neo-customer-<id>.
+ */
+export async function attachOrRotateDeployKey({
+  customerId,
+  repoName,
+  repoSlug,
+  publicKey,
+}) {
+  const id = assertSafeCustomerId(customerId);
+  const org = orgCustomers();
+  const name = repoName || resolveRepoName({ customerId: id, repoSlug });
+  const title = deployKeyTitle(id);
+  const existing = await listDeployKeys(org, name);
+  let removed = 0;
+  for (const k of existing) {
+    if (isManagedDeployKeyTitle(k.title, id)) {
+      await deleteDeployKey(org, name, k.id);
+      removed += 1;
+    }
+  }
+  const created = await addDeployKey(org, name, {
+    title,
+    key: publicKey,
+    read_only: true,
+  });
+  return {
+    ...created,
+    title,
+    read_only: true,
+    removed,
+    repo_name: name,
+    fingerprint: sshPublicKeyFingerprintSha256(publicKey),
+  };
+}
+
+export {
+  giteaBase,
+  orgCustomers,
+  assertSafeCustomerId,
+  resolveRepoName,
+  deployKeyTitle,
+};

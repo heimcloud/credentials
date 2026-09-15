@@ -1,15 +1,17 @@
 {
   "name": "heimcloud-credentials-provisioner",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Claim shop provisioning jobs and create per-customer Gitea credential repos (stubs only)",
+  "description": "Claim shop provisioning jobs; private Gitea customers/<repo_slug> repos + read-only Neo deploy keys",
   "bin": {
-    "heimcloud-credentials-provisioner": "./run.mjs"
+    "heimcloud-credentials-provisioner": "./run.mjs",
+    "heimcloud-attach-key": "./attach-key.mjs"
   },
   "scripts": {
     "once": "node run.mjs --once",
-    "dry-run": "node run.mjs --once --dry-run"
+    "dry-run": "node run.mjs --once --dry-run",
+    "attach-key": "node attach-key.mjs"
   },
   "engines": {
     "node": ">=20"
