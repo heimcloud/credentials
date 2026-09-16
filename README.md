@@ -1,22 +1,59 @@
 # Heimcloud Credentials (Neo plugin)
 
-Per-customer **private** credential repos + Neo entitlement stubs for Hermes (xAI), backups (rsync.net), AirVPN, and public IP (Hostkey).
+Per-customer **private** Gitea repos are a **config drop** for **existing** Neo services.
+The plugin syncs secrets into appdata (mode `0600`) and documents `neo.services.*` keys for
+`settings.toml` (**hybrid C**). It does **not** invent parallel entitlement stub services.
 
-**Stubs only** — no real reseller API calls. Repos are **always private**. Access is a **read-only Gitea deploy key** from the customer Neo SSH **public** key.
+Heimcloud-specific pieces: `ops/ingest.token` + Neo SSH public-key register/rotate.
+Hermes skill name **`heimcloud-ops-ingest`** stays stable.
+
+**Repos are always private.** Access is a **read-only Gitea deploy key** from the customer Neo SSH **public** key. No real secrets in this public flake.
 
 ## Install (customer Neo)
 
 1. Neo **Settings → core → plugins**
-2. Add plugin flake: `github:heimcloud/credentials` (public flake URL for Neo plugins)
-3. Enable the services you are entitled to:
-   - `neo.services.credentials.enabled` — SSH public-key registration helper
-   - `neo.services.hermes_entitlement.enabled` (token stub only; **not** core Hermes)
-   - `neo.services.backups.enabled`
-   - `neo.services.airvpn.enabled`
-   - `neo.services.public_ip.enabled`
-4. Rebuild / apply Neo. Each service writes a local placeholder under appdata (`…/credentials/<service>/`).
+2. Add plugin flake: `github:heimcloud/credentials`
+3. Enable **`neo.services.credentials.enabled`** (only plugin service — no `public_ip` / `airvpn` / `backups` / `hermes_entitlement` stubs)
+4. Enable the **core / Neo** services you are entitled to (`rathole`, `vpn`, `swag`, `backup`, `hermes`) and apply values from the drop (see mapping below)
+5. Rebuild / apply Neo. Sync the private Gitea repo `customers/<repo_slug>` into `credentialsPath` (or set `syncDir`), then the importer oneshot copies secrets → appdata
 
-Your private Gitea repo (provisioned by Heimcloud) is the source of truth for stub files.
+## Config drop tree (`layout_version` 2)
+
+```
+README.md
+meta.json                 # layout_version:2, customer_id, repo_slug, services[], ops_ingest_url
+layout_version            # file containing "2"
+ops/ingest.token
+heimcloud/neo_ssh_public_key.pub   # optional
+rathole/                  # Shop SKU public_ip → neo.services.rathole
+  settings.env            # TOKEN=, REMOTE_ADDR=, PORT=, NAME=, CERTIFICATE_ONLY=
+vpn/                      # Shop SKU airvpn → neo.services.vpn
+  settings.env            # VPN_SERVICE_PROVIDER=airvpn, WIREGUARD_*, SERVER_COUNTRIES=
+swag/
+  domain.txt
+  email.txt
+backup/                   # Shop SKU backups → neo.services.backup
+  settings.env            # HOST=, USER=, SSH_KEY_PATH= or stub notes
+hermes/
+  llm.env                 # PROVIDER=, API_KEY=, MODEL= → core neo.services.hermes.llm
+```
+
+Provisioner Shop SKUs stay named `public_ip|airvpn|backups|hermes` → folders `rathole|vpn|backup|hermes`.
+
+## File → `neo.services.*` mapping
+
+| Drop path | Neo target | Env / field mapping |
+|-----------|------------|---------------------|
+| `rathole/settings.env` | `neo.services.rathole` | `TOKEN`→`token`, `REMOTE_ADDR`→`remoteAddr`, `PORT`→`port`, `NAME`→`name`, `CERTIFICATE_ONLY`→`certificateOnly` |
+| `vpn/settings.env` | `neo.services.vpn` | `VPN_SERVICE_PROVIDER`→`vpnServiceProvider`, `WIREGUARD_PRIVATE_KEY`→`wireguardPrivateKey`, `WIREGUARD_PRESHARED_KEY`→`wireguardPresharedKey`, `WIREGUARD_ADDRESSES`→`wireguardAddresses`, `SERVER_COUNTRIES`→`serverCountries`, `FIREWALL_VPN_INPUT_PORTS`→`firewallVpnInputPorts` |
+| `swag/domain.txt` | `neo.services.swag.domain` | plain text |
+| `swag/email.txt` | `neo.services.swag.email` | plain text |
+| `backup/settings.env` | `neo.services.backup` | `HOST`→`host`, `USER`→`user`, `SSH_KEY_PATH`→`sshKey` (`mkSshConnectionOptions`) |
+| `hermes/llm.env` | **core** `neo.services.hermes.llm` | `PROVIDER`→`provider`, `API_KEY`→`apiKey`, `MODEL`→`model` — **not** a plugin service |
+| `ops/ingest.token` | appdata `…/credentials/ops/ingest.token` | Bearer for skill **`heimcloud-ops-ingest`** |
+| `heimcloud/neo_ssh_public_key.pub` | Shop ssh-key / deploy-key flow | Heimcloud-only register/rotate |
+
+**Import (hybrid C):** secrets files → appdata `0600`; non-secrets → Neo `settings.toml` / UI. After import, see `neo-credentials-overlay.md` and `imported.env` under `credentialsPath`.
 
 ## Register this Neo’s SSH public key
 
@@ -28,6 +65,8 @@ Heimcloud never needs the **private** key. Paste or set the OpenSSH **public** k
 neo.services.credentials = {
   enabled = true;
   customerId = "1";  # Shop customer id
+  customerRepoSlug = "KAKJWG9RM5";  # optional; also in meta.json
+  # syncDir = "/var/lib/neo/synced-credentials";  # optional checkout path
   neoSshPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… comment";
 };
 ```
@@ -55,8 +94,6 @@ export GITEA_TOKEN_FILE=/path/to/gitea.token   # never print the token
 node provisioner/attach-key.mjs --customer-id 1 --public-key-file ~/.ssh/id_ed25519.pub
 ```
 
-`attach-key.mjs` also PATCHes `gitea_deploy_key_id` back to Shop when that API is live.
-
 ### Rotate
 
 Re-submit a new public key (plugin option + script, or Shop). The provisioner / `attach-key` removes existing keys titled `neo-customer-<id>` or prefix `neo-`, then adds the new **read-only** key. Failed pulls until re-submit are intentional.
@@ -64,20 +101,23 @@ Re-submit a new public key (plugin option + script, or Shop). The provisioner / 
 ## Plugin layout
 
 ```
-modules/services/{credentials,hermes-entitlement,backups,airvpn,public_ip}/
-  option.nix    # Neo options + service meta (+ mkSkillOptions on credentials)
-  default.nix   # oneshot stub / pubkey writers (no containers)
-  skills.nix    # credentials → Hermes skill heimcloud-ops-ingest
+modules/services/credentials/
+  option.nix    # Neo options (+ mkSkillOptions) + sync/import knobs
+  default.nix   # SSH pubkey oneshot + config-drop importer (hybrid C)
+  skills.nix    # Hermes skill heimcloud-ops-ingest
 provisioner/    # Heimcloud-side job worker (not a Neo service)
 scripts/register-ssh-key.mjs
 docs/ssh-access-design.md
+docs/config-drop-design.md
 ```
 
 Same flake-file + import-tree shape as `github:heimcloud/shop` and `nix flake init -t github:madebydamo/neo#plugin`.
 
+**Removed** (do not reintroduce): `modules/services/{public_ip,airvpn,backups,hermes-entitlement}`.
+
 ## Provisioner (Heimcloud ops)
 
-Claims pending shop jobs and creates **private** Gitea repos `customers/<repo_slug>` with stub files, then attaches a read-only deploy key when the Neo pubkey is present.
+Claims pending shop jobs and creates **private** Gitea repos `customers/<repo_slug>` with layout_version **2** placeholders, then attaches a read-only deploy key when the Neo pubkey is present.
 
 `repo_slug` is Shop’s unique Crockford base32 id (10 chars, alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`). Prefer the slug on job list/claim. Fallback mint uses the **same** Shop generator. Legacy customer **id 1** keeps `customers/customer-1`. **No new numeric repos.** Never targets **agwanti**.
 
@@ -109,12 +149,6 @@ node run.mjs --once
 node attach-key.mjs --customer-id 1 --public-key-file /path/to/id_ed25519.pub
 ```
 
-On `processJob`, after `ensurePrivateRepo` + stubs:
-
-- Pubkey from `job.neo_ssh_public_key` / `job.payload` / `job.has_ssh_key` body fields (once Shop ships them), else env override.
-- If present: rotate managed keys, add `{ title: "neo-customer-<id>", key, read_only: true }`, PATCH Shop `gitea_deploy_key_id`, `result_json.deploy_key_attached=true`.
-- If absent: `deploy_key_attached=false`, notes `awaiting neo_ssh_public_key`.
-
 ### Shop API (Shop main `2e35d7b`)
 
 - `GET  /api/internal/provisioning/jobs?status=pending&limit=50` — includes `repo_slug`, `has_ssh_key`, `neo_ssh_public_key`, `gitea_deploy_key_id`
@@ -125,16 +159,17 @@ On `processJob`, after `ensurePrivateRepo` + stubs:
 - `POST /api/internal/provisioning/customers/:id/ssh-key` `{ "public_key", "gitea_deploy_key_id"? }`
 - `PATCH`/`POST /api/internal/provisioning/customers/:id` `{ "gitea_deploy_key_id" }`
 
-`result_json` is merged into the job payload as `result` (includes `repo_url`, `repo_slug`, `deploy_key_attached`, `gitea_deploy_key_id`).
+### Stub files written (layout 2)
 
-### Stub files written
-
-- `hermes-entitlement/token.stub` (when hermes_entitlement enabled)
-- `backups/rsync.stub`
-- `airvpn/config.stub`
-- `public_ip/hostkey.stub`
+- `rathole/settings.env` (SKU `public_ip`)
+- `vpn/settings.env` (SKU `airvpn`)
+- `backup/settings.env` (SKU `backups`)
+- `hermes/llm.env` (SKU `hermes` → core Hermes LLM)
+- `swag/domain.txt`, `swag/email.txt`
 - `ops/ingest.token` (placeholder `replace-from-private-repo`; HQ replaces with real bearer)
-- `meta.json` (includes `repo_slug`, `ops_ingest_url`)
+- `layout_version` (`2`)
+- `meta.json` (`layout_version: 2`, `repo_slug`, `ops_ingest_url`, `sku_map`)
+- `heimcloud/neo_ssh_public_key.pub` (optional placeholder)
 - `README.md`
 
 ## Lab ops wiring (incident ingest)
@@ -150,10 +185,11 @@ Heimcloud ops collects Neo update/activate failures from customer machines via:
    - `neo.services.credentials.enabled = true`
    - Hermes on the Neo host (`neo.services.hermes.enabled` — Neo core Hermes, so skills materialize)
 3. Register the Neo SSH **public** key (deploy key) and sync the private Gitea repo `customers/<repo_slug>` into appdata credentials (e.g. `${config.neo.core.volumes.appdata}/credentials`).
-4. After sync, the tree includes:
+4. After sync + importer:
    - `ops/ingest.token` — single-line bearer (mode `0600`); **never** paste into chat
    - `meta.json` — `repo_slug` / optional `ops_ingest_url`
-5. With credentials + Hermes enabled, Hermes publishes skill **`heimcloud-ops-ingest`** (from `modules/services/credentials/skills.nix`). On Neo update/activate or nightly update failure, Hermes POSTs JSON (`report_hash`, `neo_version`, `unit`, `logs_excerpt`, `customer_repo_slug`, `severity`, `target_hint`, optional `machine`) using `Authorization: Bearer $(cat …/ops/ingest.token)`.
+   - `neo-credentials-overlay.md` — mapping notes for the operator
+5. With credentials + Hermes enabled, Hermes publishes skill **`heimcloud-ops-ingest`** (from `modules/services/credentials/skills.nix`). On Neo update/activate or nightly update failure, Hermes POSTs JSON using `Authorization: Bearer $(cat …/ops/ingest.token)`.
 
 Lab private repos (already provisioned — do not recreate):
 
@@ -166,5 +202,6 @@ The nix plugin may create a **placeholder** `ops/ingest.token` containing `repla
 
 - Shop: https://github.com/heimcloud/shop
 - Gitea: https://git.heimcloud.site
-- Design: [docs/ssh-access-design.md](docs/ssh-access-design.md)
+- Design: [docs/config-drop-design.md](docs/config-drop-design.md)
+- SSH access: [docs/ssh-access-design.md](docs/ssh-access-design.md)
 - Legacy template repo `heimcloud/credentials-template` points here
