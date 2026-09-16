@@ -7,10 +7,10 @@ Per-customer **private** credential repos + Neo entitlement stubs for Hermes (xA
 ## Install (customer Neo)
 
 1. Neo **Settings → core → plugins**
-2. Add plugin flake: `github:heimcloud/credentials`
+2. Add plugin flake: `github:heimcloud/credentials` (public flake URL for Neo plugins)
 3. Enable the services you are entitled to:
    - `neo.services.credentials.enabled` — SSH public-key registration helper
-   - `neo.services.hermes.enabled`
+   - `neo.services.hermesTokens.enabled` (token stub only; **not** core Hermes)
    - `neo.services.backups.enabled`
    - `neo.services.airvpn.enabled`
    - `neo.services.public_ip.enabled`
@@ -64,7 +64,7 @@ Re-submit a new public key (plugin option + script, or Shop). The provisioner / 
 ## Plugin layout
 
 ```
-modules/services/{credentials,hermes,backups,airvpn,public_ip}/
+modules/services/{credentials,hermes-tokens,backups,airvpn,public_ip}/
   option.nix    # Neo options + service meta (+ mkSkillOptions on credentials)
   default.nix   # oneshot stub / pubkey writers (no containers)
   skills.nix    # credentials → Hermes skill heimcloud-ops-ingest
@@ -129,7 +129,7 @@ On `processJob`, after `ensurePrivateRepo` + stubs:
 
 ### Stub files written
 
-- `hermes/token.stub`
+- `hermes-tokens/token.stub` (when hermesTokens enabled)
 - `backups/rsync.stub`
 - `airvpn/config.stub`
 - `public_ip/hostkey.stub`
