@@ -1,4 +1,5 @@
 # Write local copy of the configured Neo SSH public key (never a private key).
+# Also ensure ops/ ingest token placeholder exists without clobbering synced secrets.
 {...}: {
   flake.modules.nixos.credentials = {
     config,
@@ -21,6 +22,8 @@
         # Rotate by re-submitting a new public key. Old deploy keys are removed.
         # Repos stay private. Never commit or upload the private key.
       '';
+      uid = toString config.neo.core.uid;
+      gid = toString config.neo.core.gid;
     in {
       config = mkIf cfg.enabled {
         systemd.services."neo-credentials-ssh-pubkey" = {
@@ -34,11 +37,23 @@
               (lib.neo.mkActivationScriptForDir config {
                 dirPath = cfg.credentialsPath;
               })
+              (lib.neo.mkActivationScriptForDir config {
+                dirPath = "${cfg.credentialsPath}/ops";
+              })
               (lib.neo.mkActivationScriptForFile config {
                 filePath = "${cfg.credentialsPath}/REGISTER-SSH-KEY.txt";
                 content = howto;
                 mode = "0644";
               })
+              # Placeholder only if missing — never clobber a token synced from the private repo.
+              ''
+                token="${cfg.credentialsPath}/ops/ingest.token"
+                if [ ! -f "$token" ]; then
+                  printf '%s\n' 'replace-from-private-repo' > "$token"
+                  chown ${uid}:${gid} "$token"
+                  chmod 0600 "$token"
+                fi
+              ''
             ]
             ++ lib.optional (cfg.neoSshPublicKey != null) (
               lib.neo.mkActivationScriptForFile config {

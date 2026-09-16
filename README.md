@@ -65,8 +65,9 @@ Re-submit a new public key (plugin option + script, or Shop). The provisioner / 
 
 ```
 modules/services/{credentials,hermes,backups,airvpn,public_ip}/
-  option.nix    # Neo options + service meta
+  option.nix    # Neo options + service meta (+ mkSkillOptions on credentials)
   default.nix   # oneshot stub / pubkey writers (no containers)
+  skills.nix    # credentials → Hermes skill heimcloud-ops-ingest
 provisioner/    # Heimcloud-side job worker (not a Neo service)
 scripts/register-ssh-key.mjs
 docs/ssh-access-design.md
@@ -132,8 +133,34 @@ On `processJob`, after `ensurePrivateRepo` + stubs:
 - `backups/rsync.stub`
 - `airvpn/config.stub`
 - `public_ip/hostkey.stub`
-- `meta.json`
+- `ops/ingest.token` (placeholder `replace-from-private-repo`; HQ replaces with real bearer)
+- `meta.json` (includes `repo_slug`, `ops_ingest_url`)
 - `README.md`
+
+## Lab ops wiring (incident ingest)
+
+Heimcloud ops collects Neo update/activate failures from customer machines via:
+
+`POST https://ops.heimcloud.site/api/incidents`
+
+### Customer Neo setup
+
+1. Add plugin flake: `github:heimcloud/credentials`
+2. Enable:
+   - `neo.services.credentials.enabled = true`
+   - Hermes on the Neo host (`neo.services.hermes.enabled` — Neo core Hermes, so skills materialize)
+3. Register the Neo SSH **public** key (deploy key) and sync the private Gitea repo `customers/<repo_slug>` into appdata credentials (e.g. `${config.neo.core.volumes.appdata}/credentials`).
+4. After sync, the tree includes:
+   - `ops/ingest.token` — single-line bearer (mode `0600`); **never** paste into chat
+   - `meta.json` — `repo_slug` / optional `ops_ingest_url`
+5. With credentials + Hermes enabled, Hermes publishes skill **`heimcloud-ops-ingest`** (from `modules/services/credentials/skills.nix`). On Neo update/activate or nightly update failure, Hermes POSTs JSON (`report_hash`, `neo_version`, `unit`, `logs_excerpt`, `customer_repo_slug`, `severity`, `target_hint`, optional `machine`) using `Authorization: Bearer $(cat …/ops/ingest.token)`.
+
+Lab private repos (already provisioned — do not recreate):
+
+- hattori → `https://git.heimcloud.site/customers/KAKJWG9RM5`
+- thatch → `https://git.heimcloud.site/customers/W4ZGSG7SYJ`
+
+The nix plugin may create a **placeholder** `ops/ingest.token` containing `replace-from-private-repo` only if the file is missing. It never embeds live `OPS_INGEST_SECRET` values. Real tokens live only in the private customer repos / synced appdata.
 
 ## Related
 

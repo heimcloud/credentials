@@ -75,7 +75,8 @@ Access is a **read-only Gitea deploy key** from the customer Neo SSH public key.
 - \`backups/rsync.stub\` — rsync.net (later)
 - \`airvpn/config.stub\` — AirVPN (later)
 - \`public_ip/hostkey.stub\` — Hostkey public IP (later)
-- \`meta.json\` — provision metadata
+- \`ops/ingest.token\` — Heimcloud ops incident ingest bearer (HQ replaces; never commit live secrets publicly)
+- \`meta.json\` — provision metadata (includes ops_ingest_url)
 
 ## Rules
 - Stubs only until reseller APIs are wired
@@ -91,6 +92,13 @@ Job #${job?.id ?? "?"} · ${now}
     if (stub) files.push({ path: stub.path, content: stub.content });
   }
 
+  // Ops ingest bearer placeholder — HQ replaces with the real token out-of-band.
+  // Never embed live OPS_INGEST_SECRET values in this repo or public flakes.
+  files.push({
+    path: "ops/ingest.token",
+    content: "replace-from-private-repo\n",
+  });
+
   files.push({
     path: "meta.json",
     content:
@@ -104,6 +112,7 @@ Job #${job?.id ?? "?"} · ${now}
           job_type: job?.job_type ?? null,
           order_id: job?.order_id ?? null,
           services: svc,
+          ops_ingest_url: "https://ops.heimcloud.site/api/incidents",
           provisioned_at: now,
           note: "stub credentials only — no real reseller API calls",
           rotation_days: 90,

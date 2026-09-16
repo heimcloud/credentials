@@ -52,7 +52,8 @@
               '';
               projectUrl = "https://github.com/heimcloud/credentials";
               githubUrl = "https://github.com/heimcloud/credentials";
-            };
+            }
+            // lib.neo.mkSkillOptions {enabled = true;};
         };
         default = {};
         description = "Heimcloud credentials / Neo SSH public key";
