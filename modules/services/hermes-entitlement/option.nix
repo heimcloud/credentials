@@ -1,20 +1,20 @@
 # Hermes (xAI tokens later) — entitlement stub for Neo.
 {...}: {
-  flake.modules.nixos.hermes-tokens-option = {
+  flake.modules.nixos.hermes-entitlement-option = {
     config,
     lib,
     ...
   }:
     with lib;
     with {inherit (lib.neo) mkOption mkEnableOption;}; {
-      options.neo.services.hermesTokens = mkOption {
+      options.neo.services.hermes_entitlement = mkOption {
         type = types.submodule {
           options =
             {
-              enabled = mkEnableOption "Heimcloud Hermes AI token stub (xAI reseller later; gated — does not replace core Hermes)" {rank = 0;};
+              enabled = mkEnableOption "Heimcloud Heimcloud Hermes entitlement stub (xAI later; gated — does not replace core Hermes)" {rank = 0;};
               credentialsPath = mkOption {
                 type = types.str;
-                default = "${config.neo.core.volumes.appdata}/credentials/hermes-tokens";
+                default = "${config.neo.core.volumes.appdata}/credentials/hermes-entitlement";
                 description = "Directory for Hermes token stubs (customer credentials repo or local placeholders).";
                 rank = 10;
               };
@@ -25,7 +25,7 @@
                 rank = 20;
               };
             }
-            // lib.neo.mkAppdata "${config.neo.core.volumes.appdata}/credentials/hermes-tokens"
+            // lib.neo.mkAppdata "${config.neo.core.volumes.appdata}/credentials/hermes-entitlement"
             // lib.neo.mkServiceMeta {
               category = "Credentials/AI";
               description = ''
@@ -37,7 +37,7 @@
             };
         };
         default = {};
-        description = "Heimcloud Hermes token stub (hermesTokens; separate from core neo.services.hermes)";
+        description = "Heimcloud Hermes entitlement stub (hermes_entitlement; separate from core neo.services.hermes)";
       };
     };
 }

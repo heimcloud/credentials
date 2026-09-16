@@ -1,12 +1,12 @@
 # Hermes stub — write placeholder token file only (no reseller API).
 {...}: {
-  flake.modules.nixos.hermes-tokens = {
+  flake.modules.nixos.hermes-entitlement = {
     config,
     lib,
     ...
   }:
     with lib; let
-      cfg = config.neo.services.hermesTokens;
+      cfg = config.neo.services.hermes_entitlement;
       stubContent = ''
         # Heimcloud Hermes token stub
         # Replace with real xAI / Hermes credentials when provisioned.
@@ -16,7 +16,7 @@
       '';
     in {
       config = mkIf cfg.enabled {
-        systemd.services."neo-credentials-hermes-tokens-stub" = {
+        systemd.services."neo-credentials-hermes-entitlement-stub" = {
           description = "Write Hermes credentials stub placeholder";
           wantedBy = ["multi-user.target"];
           before = ["multi-user.target"];
