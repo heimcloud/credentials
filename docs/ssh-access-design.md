@@ -18,6 +18,7 @@
 | Provisioner: private repo at `customers/<repo_slug>` (legacy `customer-1`) | **done** |
 | Provisioner: attach/rotate read-only deploy key `neo-customer-<id>` | **done** |
 | `provisioner/attach-key.mjs` | **done** |
+| `provisioner/sync-deploy-keys.mjs` + job_type `attach_gitea_deploy_key` | **done** |
 | Plugin option `neo.services.credentials.neoSshPublicKey` | **done** |
 | `scripts/register-ssh-key.mjs` → Shop ssh-key | **done** (clear 404 if Shop not live yet) |
 | PATCH `gitea_deploy_key_id` back to Shop after attach | **done** |
@@ -43,6 +44,13 @@ Shop **stores** the pubkey and slug. Credentials **attaches** the Gitea deploy k
    - PATCH Shop `gitea_deploy_key_id`
    - `result_json.deploy_key_attached=true`, `gitea_deploy_key_id`
 5. If absent: `deploy_key_attached=false`, notes `awaiting neo_ssh_public_key`.
+
+## Path S / Path H (portal / factory SSH save)
+1. Portal or factory `POST /customers/:id/ssh-key` with the Neo **public** key.
+2. Shop stores `neo_ssh_public_key` and enqueues **`attach_gitea_deploy_key`**.
+3. HQ: `node provisioner/sync-deploy-keys.mjs --from-jobs` (or `--customer-id N`), or `run.mjs --once` (prefers attach jobs).
+4. Worker claims → `attachOrRotateDeployKey` (RO) → PATCH `gitea_deploy_key_id` → complete.
+5. Labs already use the homeserver `.pub` as the RO key (same path).
 
 ## Rotation
 Re-submit the new public key (plugin/script or Shop). Credentials deletes managed deploy keys and adds the new read-only key. Until that runs, git fetch with the new Neo key fails (by design).

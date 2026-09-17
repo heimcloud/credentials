@@ -98,6 +98,34 @@ node provisioner/attach-key.mjs --customer-id 1 --public-key-file ~/.ssh/id_ed25
 
 Re-submit a new public key (plugin option + script, or Shop). The provisioner / `attach-key` removes existing keys titled `neo-customer-<id>` or prefix `neo-`, then adds the new **read-only** key. Failed pulls until re-submit are intentional.
 
+
+## Path S / Path H — attach deploy key after SSH save
+
+Shop **Customer Portal** (Path S) and the **factory** (Path H) POST the Neo SSH
+**public** key with a staff/provisioning token:
+
+`POST /api/internal/provisioning/customers/:id/ssh-key` `{ "public_key": "ssh-ed25519 …" }`
+
+Shop stores `neo_ssh_public_key` and enqueues job_type **`attach_gitea_deploy_key`**.
+HQ then attaches a **read-only** Gitea deploy key on `customers/<repo_slug>`:
+
+```bash
+export PROVISIONING_API_TOKEN_FILE=…   # or PROVISIONING_API_TOKEN=
+export GITEA_TOKEN_FILE=…              # or GITEA_TOKEN=
+
+# By customer id (GET Shop customer → attach if pubkey present):
+node provisioner/sync-deploy-keys.mjs --customer-id N
+
+# From pending attach jobs (prefer attach_gitea_deploy_key → claim → attach → complete):
+node provisioner/sync-deploy-keys.mjs --from-jobs
+
+# Or let run.mjs pick attach jobs preferentially:
+node provisioner/run.mjs --once
+```
+
+Labs already use the homeserver `.pub` as the RO deploy key (same attach/rotate
+path). Repos stay private; never touch **agwanti**.
+
 ## Plugin layout
 
 ```
@@ -106,6 +134,7 @@ modules/services/credentials/
   default.nix   # SSH pubkey oneshot + config-drop importer (hybrid C)
   skills.nix    # Hermes skill heimcloud-ops-ingest
 provisioner/    # Heimcloud-side job worker (not a Neo service)
+              # run.mjs, attach-key.mjs, sync-deploy-keys.mjs
 scripts/register-ssh-key.mjs
 docs/ssh-access-design.md
 docs/config-drop-design.md
@@ -147,11 +176,15 @@ node run.mjs --once
 
 # Follow-up after Shop stores a key (or for proof on customer-1):
 node attach-key.mjs --customer-id 1 --public-key-file /path/to/id_ed25519.pub
+
+# Path S / Path H — after portal/factory ssh-key POST (attach_gitea_deploy_key):
+node sync-deploy-keys.mjs --customer-id N
+node sync-deploy-keys.mjs --from-jobs
 ```
 
 ### Shop API (Shop main `2e35d7b`)
 
-- `GET  /api/internal/provisioning/jobs?status=pending&limit=50` — includes `repo_slug`, `has_ssh_key`, `neo_ssh_public_key`, `gitea_deploy_key_id`
+- `GET  /api/internal/provisioning/jobs?status=pending&limit=50` — includes `repo_slug`, `has_ssh_key`, `neo_ssh_public_key`, `gitea_deploy_key_id`; job_type `provision_stub` or **`attach_gitea_deploy_key`**
 - `POST /api/internal/provisioning/jobs/:id/claim` `{"worker":"credentials"}`
 - `POST /api/internal/provisioning/jobs/:id/complete` `{"notes","result_json"}`
 - `POST /api/internal/provisioning/jobs/:id/fail` `{"notes"}`

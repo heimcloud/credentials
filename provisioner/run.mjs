@@ -7,7 +7,12 @@
  *
  * Creates private Gitea repos customers/<repo_slug> (legacy customer-1
  * keeps customers/customer-1). Attaches a read-only deploy key when a
- * Neo SSH public key is present. Never flips repos public. Never touches agwanti.
+ * Neo SSH public key is present.
+ *
+ * Also claims Shop job_type **attach_gitea_deploy_key** (portal/factory SSH
+ * save) → RO deploy key attach → complete + PATCH gitea_deploy_key_id.
+ * Prefer sync-deploy-keys.mjs for attach-only batch; run.mjs handles either.
+ * Never flips repos public. Never touches agwanti.
  */
 
 import {
@@ -63,7 +68,112 @@ async function resolveSlugForJob(job, customerId) {
   return minted;
 }
 
+const ATTACH_JOB_TYPES = new Set([
+  "attach_gitea_deploy_key",
+  "attach_deploy_key",
+]);
+
+function isAttachDeployKeyJob(job) {
+  const t = String(job?.job_type || "").trim();
+  return ATTACH_JOB_TYPES.has(t);
+}
+
+/**
+ * Path S / Path H follow-up: Shop already stored the pubkey and enqueued
+ * attach_gitea_deploy_key. Claim → RO deploy key → PATCH → complete.
+ * Does not rewrite stub files or re-run provision_stub.
+ */
+async function processAttachDeployKeyJob(job, { dryRun }) {
+  const customerId = assertSafeCustomerId(job.customer_id);
+  let repoSlug = extractShopRepoSlug(job);
+  let pubkey = extractNeoSshPublicKey(job);
+
+  if (!pubkey || !repoSlug) {
+    try {
+      const data = await getCustomer(customerId);
+      const cust = data.customer || data;
+      if (!pubkey) pubkey = extractNeoSshPublicKey(cust);
+      if (!repoSlug) repoSlug = extractShopRepoSlug(cust);
+    } catch (err) {
+      log(`shop GET customer ${customerId}: ${err.message}`);
+    }
+  }
+
+  const repoName = resolveRepoName({ customerId, repoSlug });
+  log(
+    `attach job #${job.id} type=${job.job_type} customer=${customerId} slug=${repoSlug || "(legacy)"} repo=${repoName} has_key=${Boolean(pubkey)}`,
+  );
+
+  if (dryRun) {
+    log(`[dry-run] would claim job #${job.id}`);
+    log(`[dry-run] would attach read-only deploy key neo-customer-${customerId} on customers/${repoName}`);
+    return {
+      dryRun: true,
+      job_type: job.job_type,
+      repo_name: repoName,
+      repo_slug: repoSlug,
+      deploy_key_attached: Boolean(pubkey),
+    };
+  }
+
+  if (!pubkey) {
+    throw new Error(
+      `attach_gitea_deploy_key job #${job.id}: no neo_ssh_public_key`,
+    );
+  }
+
+  const claimed = await claimJob(job.id, { worker: "credentials" });
+  log(`claimed job #${job.id}`, (claimed.job || job).status || "claimed");
+
+  try {
+    const attached = await attachOrRotateDeployKey({
+      customerId,
+      repoName,
+      repoSlug,
+      publicKey: pubkey,
+    });
+    const gitea_deploy_key_id = attached.id ?? null;
+    log(
+      `deploy key attached title=${attached.title} id=${gitea_deploy_key_id} read_only=true`,
+    );
+    try {
+      await patchCustomerDeployKeyId(customerId, gitea_deploy_key_id);
+      log(`patched Shop gitea_deploy_key_id=${gitea_deploy_key_id}`);
+    } catch (patchErr) {
+      log(`Shop PATCH gitea_deploy_key_id: ${patchErr.message}`);
+    }
+
+    const result_json = {
+      job_type: "attach_gitea_deploy_key",
+      repo_name: repoName,
+      repo_slug: repoSlug,
+      org: process.env.GITEA_ORG_CUSTOMERS || "customers",
+      deploy_key_attached: true,
+      gitea_deploy_key_id,
+      deploy_key_fingerprint: attached.fingerprint || null,
+      title: attached.title,
+      read_only: true,
+    };
+    const notes = `RO deploy key ${attached.title} id=${gitea_deploy_key_id} on customers/${repoName}`;
+    const done = await completeJob(job.id, { notes, result_json });
+    log(`completed job #${job.id}`, done.job?.status || "done");
+    return result_json;
+  } catch (err) {
+    log(`FAIL job #${job.id}:`, err.message);
+    try {
+      await failJob(job.id, { notes: `attach_gitea_deploy_key error: ${err.message}` });
+    } catch (failErr) {
+      log(`could not mark job failed:`, failErr.message);
+    }
+    throw err;
+  }
+}
+
 async function processJob(job, { dryRun }) {
+  if (isAttachDeployKeyJob(job)) {
+    return processAttachDeployKeyJob(job, { dryRun });
+  }
+
   const customerId = job.customer_id;
   assertSafeCustomerId(customerId);
   const email = job.email || job.payload?.email || null;
@@ -211,9 +321,9 @@ async function main() {
   if (opts.help) {
     console.log(`Usage: node provisioner/run.mjs [--once] [--dry-run]
 
-Claim pending shop provisioning jobs and create private Gitea
-customers/<repo_slug> repos (legacy customer-1 → customers/customer-1)
-with stub credential files and an optional read-only Neo deploy key.
+Claim pending shop provisioning jobs: provision_stub creates private
+Gitea customers/<repo_slug> repos with stub files + optional RO deploy key;
+attach_gitea_deploy_key only attaches/rotates the RO deploy key (Path S/H).
 
 Environment:
   SHOP_BASE_URL, PROVISIONING_API_TOKEN, PROVISIONING_API_TOKEN_FILE
@@ -262,7 +372,9 @@ Environment:
     return;
   }
 
-  const job = jobs[0];
+  // Prefer attach_gitea_deploy_key (portal/factory SSH save) over provision_stub.
+  const attachJob = jobs.find((j) => isAttachDeployKeyJob(j));
+  const job = attachJob || jobs[0];
   const result = await processJob(job, opts);
   log("result", JSON.stringify(result));
 }

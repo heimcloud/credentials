@@ -95,28 +95,32 @@
             chown "$UID_:$GID_" "$DEST" "$DEST/ops" "$DEST/rathole" "$DEST/vpn" "$DEST/swag" "$DEST/backup" "$DEST/hermes" "$DEST/heimcloud"
 
             # Copy a file if present; secrets get 0600. Never invent fake neo.services stubs.
+            # When DROP == DEST (syncDir defaults to credentialsPath), skip install —
+            # same-file would fail with "… and itself are the same file".
             copy_secret() {
               local src="$1" dst="$2"
               if [ -f "$src" ]; then
-                install -m 0600 -o "$UID_" -g "$GID_" "$src" "$dst"
+                if [ "$src" = "$dst" ]; then
+                  chown "$UID_:$GID_" "$dst" || true
+                  chmod 0600 "$dst" || true
+                else
+                  install -m 0600 -o "$UID_" -g "$GID_" "$src" "$dst"
+                fi
               fi
             }
             copy_plain() {
               local src="$1" dst="$2"
               if [ -f "$src" ]; then
-                install -m 0644 -o "$UID_" -g "$GID_" "$src" "$dst"
+                if [ "$src" = "$dst" ]; then
+                  chown "$UID_:$GID_" "$dst" || true
+                  chmod 0644 "$dst" || true
+                else
+                  install -m 0644 -o "$UID_" -g "$GID_" "$src" "$dst"
+                fi
               fi
             }
 
-            # Prefer drop under syncDir; if DROP == DEST, still normalize modes.
-            if [ -f "$DROP/ops/ingest.token" ]; then
-              if [ "$DROP/ops/ingest.token" != "$DEST/ops/ingest.token" ]; then
-                copy_secret "$DROP/ops/ingest.token" "$DEST/ops/ingest.token"
-              else
-                chown "$UID_:$GID_" "$DEST/ops/ingest.token" || true
-                chmod 0600 "$DEST/ops/ingest.token" || true
-              fi
-            fi
+            copy_secret "$DROP/ops/ingest.token" "$DEST/ops/ingest.token"
 
             copy_secret "$DROP/rathole/settings.env" "$DEST/rathole/settings.env"
             copy_secret "$DROP/vpn/settings.env" "$DEST/vpn/settings.env"
