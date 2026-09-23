@@ -1,6 +1,7 @@
 # Hermes skill: report Neo update/activate failures to Heimcloud ops ingest.
-# Published into neo-hermes-skills (external_dirs) via skill.conf; also
-# materialized into HERMES_HOME/skills by skill-materialize.nix so -s resolves.
+# skill.conf defines content for skill-materialize.nix (HERMES_HOME/skills symlink).
+# skill.enabled defaults to false so Hermes getSkillServices does NOT also publish
+# into neo-hermes-skills/external_dirs (duplicate name → hermes -s fails closed).
 {...}: {
   flake.modules.nixos.credentials-skills = {
     config,
@@ -18,7 +19,8 @@
       service = "credentials";
       inherit cfg domain;
       name = "heimcloud-ops-ingest";
-      description = "Heimcloud ops: classify update failures and POST incidents";
+      # YAML-quote: mkSkillMd does not quote; unquoted colon made platforms a string.
+      description = "\"Heimcloud ops: classify update failures and POST incidents\"";
       tags = ["neo" "heimcloud" "ops" "incidents" "credentials"];
       title = "Heimcloud · Ops incident ingest";
       body = ''
