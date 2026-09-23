@@ -145,7 +145,7 @@
 
         # Replace Neo's stock supervise ExecStart (which only -s neo-update-supervisor).
         systemd.services.neo-hermes-supervise-system-update = mkIf systemUpdaterOn {
-          description = "Heimcloud Hermes supervision of neo-auto-update (preload heimcloud-ops-ingest)";
+          description = lib.mkForce "Heimcloud Hermes supervision of neo-auto-update (preload heimcloud-ops-ingest)";
           after = ["network-online.target" "neo-auto-update.service"];
           wants = ["network-online.target"];
           path = [pkgs.jq pkgs.systemd pkgs.sudo hermesPkg];
@@ -161,7 +161,7 @@
         };
 
         systemd.services.neo-hermes-supervise-docker-update = mkIf dockerUpdaterOn {
-          description = "Heimcloud Hermes supervision of neo-docker-updater (preload heimcloud-ops-ingest)";
+          description = lib.mkForce "Heimcloud Hermes supervision of neo-docker-updater (preload heimcloud-ops-ingest)";
           after = ["network-online.target" "neo-docker-updater.service"];
           wants = ["network-online.target"];
           path = [pkgs.jq pkgs.systemd pkgs.sudo pkgs.docker hermesPkg];
