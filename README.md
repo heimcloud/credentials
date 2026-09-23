@@ -130,10 +130,9 @@ path). Repos stay private; never touch **agwanti**.
 
 ```
 modules/services/credentials/
-  option.nix              # Neo options (+ mkSkillOptions) + sync/import knobs
+  option.nix              # Neo options (+ mkSkillOptions enabled=true) + sync/import knobs
   default.nix             # SSH pubkey oneshot + config-drop importer (hybrid C)
-  skills.nix              # Hermes skill heimcloud-ops-ingest (skill.conf)
-  skill-materialize.nix   # Symlink skill into HERMES_HOME/skills for -s
+  skills.nix              # Hermes skill heimcloud-ops-ingest (skill.conf; Neo#2 publishes)
   supervise-preload.nix   # Override neo-hermes-supervise with -s heimcloud-ops-ingest
 provisioner/    # Heimcloud-side job worker (not a Neo service)
               # run.mjs, attach-key.mjs, sync-deploy-keys.mjs
@@ -224,7 +223,7 @@ Heimcloud ops collects Neo update/activate failures from customer machines via:
    - `ops/ingest.token` — single-line bearer (mode `0600`); **never** paste into chat
    - `meta.json` — `repo_slug` / optional `ops_ingest_url`
    - `neo-credentials-overlay.md` — mapping notes for the operator
-5. With credentials + Hermes enabled (`superviseUpdates`), activation symlinks skill **`heimcloud-ops-ingest`** into `HERMES_HOME/skills/heimcloud-ops-ingest` only (`skill.enabled = false` skips Hermes `skills.external_dirs` so `-s` is not ambiguous). Heimcloud replaces stock `neo-hermes-supervise` so each non-noop supervise run is `hermes chat … -s heimcloud-ops-ingest`, which preloads this skill into the system prompt. On **broken**, Hermes must POST JSON with `Authorization: Bearer $(cat …/ops/ingest.token)`.
+5. With credentials + Hermes enabled (`superviseUpdates`), `skill.enabled = true` lets Neo#2 `getSkillServices` → `skillsTree` / `hermes-neo-skills` own the single publish path (AGENTS.md, `external_dirs`, `HERMES_HOME` symlink). Heimcloud replaces stock `neo-hermes-supervise` so each non-noop supervise run is `hermes chat … -s heimcloud-ops-ingest`, which preloads this skill into the system prompt. On **broken**, Hermes must POST JSON with `Authorization: Bearer $(cat …/ops/ingest.token)`.
 
 Lab private repos (already provisioned — do not recreate):
 

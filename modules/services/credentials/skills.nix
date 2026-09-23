@@ -1,7 +1,7 @@
 # Hermes skill: report Neo update/activate failures to Heimcloud ops ingest.
-# skill.conf defines content for skill-materialize.nix (HERMES_HOME/skills symlink).
-# skill.enabled defaults to false so Hermes getSkillServices does NOT also publish
-# into neo-hermes-skills/external_dirs (duplicate name → hermes -s fails closed).
+# skill.conf + skill.enabled=true → Neo#2 getSkillServices → skillsTree /
+# hermes-neo-skills (single publish: AGENTS.md, external_dirs, HERMES_HOME symlink).
+# Do not reintroduce plugin skill-materialize.nix (raced hermes-neo-skills).
 #
 # Hermes parse_frontmatter: if YAML fails it falls back to naive key: value splits.
 # An unquoted description with a colon (e.g. Heimcloud ops: …) breaks YAML so

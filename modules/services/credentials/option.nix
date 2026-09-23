@@ -89,9 +89,9 @@
               projectUrl = "https://github.com/heimcloud/credentials";
               githubUrl = "https://github.com/heimcloud/credentials";
             }
-            # Keep skill.conf for materialize content, but do not publish into
-            # Hermes skills.external_dirs (single path: HERMES_HOME/skills).
-            // lib.neo.mkSkillOptions {enabled = false;};
+            # Neo#2 owns publish via getSkillServices → skillsTree + hermes-neo-skills
+            # (AGENTS.md, external_dirs, HERMES_HOME symlink). Explicit true.
+            // lib.neo.mkSkillOptions {enabled = true;};
         };
         default = {};
         description = "Heimcloud credentials / config-drop importer + Neo SSH public key";
