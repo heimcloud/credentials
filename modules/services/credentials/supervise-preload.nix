@@ -1,7 +1,9 @@
 # ONE Hermes hook for Heimcloud ops incident filing:
 # Override neo-hermes-supervise to CLI-preload skill heimcloud-ops-ingest (-s).
 # Hermes folds preloaded skill bodies into the system prompt (cannot "forget"
-# to load). Do not edit SOUL.md. No systemd curl oneshot layer.
+# to load). -s resolves via HERMES_HOME/skills (see skill-materialize.nix);
+# Neo external_dirs alone was not enough on labs. Do not edit SOUL.md.
+# No systemd curl oneshot layer.
 {...}: {
   flake.modules.nixos.credentials-supervise-preload = {
     config,

@@ -1,4 +1,6 @@
 # Hermes skill: report Neo update/activate failures to Heimcloud ops ingest.
+# Published into neo-hermes-skills (external_dirs) via skill.conf; also
+# materialized into HERMES_HOME/skills by skill-materialize.nix so -s resolves.
 {...}: {
   flake.modules.nixos.credentials-skills = {
     config,
