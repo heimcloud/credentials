@@ -2,6 +2,12 @@
 # skill.conf defines content for skill-materialize.nix (HERMES_HOME/skills symlink).
 # skill.enabled defaults to false so Hermes getSkillServices does NOT also publish
 # into neo-hermes-skills/external_dirs (duplicate name → hermes -s fails closed).
+#
+# Hermes parse_frontmatter: if YAML fails it falls back to naive key: value splits.
+# An unquoted description with a colon (e.g. Heimcloud ops: …) breaks YAML so
+# platforms becomes the string "[linux]" and skill_matches_platform fails closed.
+# Colon-free description + omit platforms (Hermes treats absent = all OS) hardens
+# against that class of frontmatter slip.
 {...}: {
   flake.modules.nixos.credentials-skills = {
     config,
@@ -15,15 +21,16 @@
     metaPath = "${credsDir}/meta.json";
     defaultOpsUrl = "https://ops.heimcloud.site/api/incidents";
   in {
-    config.neo.services.credentials.skill.conf = lib.neo.mkServiceSkill {
-      service = "credentials";
-      inherit cfg domain;
-      name = "heimcloud-ops-ingest";
-      # YAML-quote: mkSkillMd does not quote; unquoted colon made platforms a string.
-      description = "\"Heimcloud ops: classify update failures and POST incidents\"";
-      tags = ["neo" "heimcloud" "ops" "incidents" "credentials"];
-      title = "Heimcloud · Ops incident ingest";
-      body = ''
+    config.neo.services.credentials.skill.conf = let
+      skill = lib.neo.mkServiceSkill {
+        service = "credentials";
+        inherit cfg domain;
+        name = "heimcloud-ops-ingest";
+        # Colon-free: avoids YAML-fail fallback that stringifies platforms.
+        description = "Classify Neo update failures and POST Heimcloud ops incidents";
+        tags = ["neo" "heimcloud" "ops" "incidents" "credentials"];
+        title = "Heimcloud · Ops incident ingest";
+        body = ''
         ## When to Use
         This skill is the **only** Heimcloud failure-reporting mechanism. Neo's `neo-heimcloud-supervise` preloads it with Hermes CLI `-s heimcloud-ops-ingest` on every non-noop update supervise run, which injects this full body into the **system prompt** (Hermes cannot skip loading it).
 
@@ -118,7 +125,14 @@
         - `test -s ${tokenPath}` and file is not the placeholder string
         - `jq . ${metaPath}` shows `repo_slug`
         - A dry POST is only for confirmed failures; expect 2xx from ops ingest
-      '';
-    };
+        '';
+      };
+    in
+      skill
+      // {
+        # mkServiceSkill/mkSkillMd emit platforms: [linux]; strip so Hermes treats
+        # platforms as absent (= all OS) even if description YAML ever fails again.
+        content = builtins.replaceStrings ["platforms: [linux]\n"] [""] skill.content;
+      };
   };
 }
