@@ -182,7 +182,7 @@ node sync-deploy-keys.mjs --customer-id N
 node sync-deploy-keys.mjs --from-jobs
 ```
 
-### Shop API (Shop main `2e35d7b`)
+### Shop API (Shop `main` tip)
 
 - `GET  /api/internal/provisioning/jobs?status=pending&limit=50` — includes `repo_slug`, `has_ssh_key`, `neo_ssh_public_key`, `gitea_deploy_key_id`; job_type `provision_stub` or **`attach_gitea_deploy_key`**
 - `POST /api/internal/provisioning/jobs/:id/claim` `{"worker":"credentials"}`

@@ -12,9 +12,9 @@
 
 | Piece | Status |
 |-------|--------|
-| Shop columns `repo_slug`, `neo_ssh_public_key`, `gitea_deploy_key_id` | Shop main `2e35d7b` (Fleet redeploying) |
-| Shop `POST /customers/:id/ssh-key`, `GET /customers/:id`, `PATCH\|POST /customers/:id` | Shop main `2e35d7b` |
-| Jobs include `repo_slug`, `has_ssh_key`, `neo_ssh_public_key`, `gitea_deploy_key_id` | Shop main `2e35d7b` |
+| Shop columns `repo_slug`, `neo_ssh_public_key`, `gitea_deploy_key_id` | Shop `main` tip (Fleet redeploying) |
+| Shop `POST /customers/:id/ssh-key`, `GET /customers/:id`, `PATCH\|POST /customers/:id` | Shop `main` tip |
+| Jobs include `repo_slug`, `has_ssh_key`, `neo_ssh_public_key`, `gitea_deploy_key_id` | Shop `main` tip |
 | Provisioner: private repo at `customers/<repo_slug>` (legacy `customer-1`) | **done** |
 | Provisioner: attach/rotate read-only deploy key `neo-customer-<id>` | **done** |
 | `provisioner/attach-key.mjs` | **done** |
