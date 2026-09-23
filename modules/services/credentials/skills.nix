@@ -16,16 +16,21 @@
       service = "credentials";
       inherit cfg domain;
       name = "heimcloud-ops-ingest";
-      description = "POST Neo update/activate failures to Heimcloud ops";
+      description = "Heimcloud ops: classify update failures and POST incidents";
       tags = ["neo" "heimcloud" "ops" "incidents" "credentials"];
       title = "Heimcloud · Ops incident ingest";
       body = ''
         ## When to Use
-        **Manual / operator** reports: when asked to file a Neo update/activate failure with Heimcloud ops, or when you notice a broken generation that the automatic reporter missed.
+        This skill is the **only** Heimcloud failure-reporting mechanism. Neo's `neo-heimcloud-supervise` preloads it with Hermes CLI `-s heimcloud-ops-ingest` on every non-noop update supervise run, which injects this full body into the **system prompt** (Hermes cannot skip loading it).
 
-        **Automatic path (preferred):** systemd oneshot `neo-heimcloud-ops-report` (credentials `reportUpdateFailures`, default on) hooks `neo-auto-update` / `neo-docker-updater` and POSTs on failure markers — no LLM. Do **not** rely on `neo-update-supervisor` alone; that skill only Telegram-notifies and does not call this skill.
+        Also use when an operator asks you to file a Neo update/activate failure with Heimcloud ops.
 
-        Still POST here if the operator asks, or if you classify a run as **broken** and want a second channel. Do **not** POST on clean runs.
+        ## Required when outcome is broken
+        1. Classify using updater marker + systemd/journals (broken / warning / clean).
+        2. **broken:** `hermes send --to all` with a short summary, **then** POST `/api/incidents` using the curl below. Skipping the POST is a procedure failure.
+        3. **warning:** Telegram notify only; do **not** POST.
+        4. **clean:** do nothing.
+        5. Do **not** invent tokens. If `ops/ingest.token` is missing or equals `replace-from-private-repo`, say so in Telegram and stop (do not POST).
 
         ## Credentials (this machine)
         - Bearer token file (single line): `${tokenPath}`

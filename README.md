@@ -222,7 +222,7 @@ Heimcloud ops collects Neo update/activate failures from customer machines via:
    - `ops/ingest.token` — single-line bearer (mode `0600`); **never** paste into chat
    - `meta.json` — `repo_slug` / optional `ops_ingest_url`
    - `neo-credentials-overlay.md` — mapping notes for the operator
-5. With credentials enabled, **`neo-heimcloud-ops-report`** (systemd, default on) POSTs update failures to ops without Hermes. With Hermes enabled, skill **`heimcloud-ops-ingest`** (from `modules/services/credentials/skills.nix`). On Neo update/activate or nightly update failure, Hermes POSTs JSON using `Authorization: Bearer $(cat …/ops/ingest.token)`.
+5. With credentials + Hermes enabled (`superviseUpdates`), Hermes publishes skill **`heimcloud-ops-ingest`**. Heimcloud replaces stock `neo-hermes-supervise` so each non-noop supervise run is `hermes chat … -s heimcloud-ops-ingest`, which preloads this skill into the system prompt. On **broken**, Hermes must POST JSON with `Authorization: Bearer $(cat …/ops/ingest.token)`.
 
 Lab private repos (already provisioned — do not recreate):
 
