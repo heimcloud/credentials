@@ -75,6 +75,17 @@
                 '';
                 rank = 50;
               };
+              reportUpdateFailures = mkOption {
+                type = types.bool;
+                default = true;
+                description = ''
+                  When true, hook neo-auto-update / neo-docker-updater to a
+                  deterministic oneshot that POSTs failures to Heimcloud ops
+                  (`ops/ingest.token`) without waiting on Hermes LLM. Skill
+                  heimcloud-ops-ingest remains for manual operator reports.
+                '';
+                rank = 55;
+              };
             }
             // lib.neo.mkAppdata "${config.neo.core.volumes.appdata}/credentials"
             // lib.neo.mkServiceMeta {

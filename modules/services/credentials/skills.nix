@@ -21,9 +21,11 @@
       title = "Heimcloud · Ops incident ingest";
       body = ''
         ## When to Use
-        After a **Neo update / activate / dependency failure**, or a **nightly (`neo-auto-update`) failure**, file an incident with Heimcloud ops so HQ can see customer impact. Also use when the operator asks you to report a broken Neo generation or failed activate to Heimcloud.
+        **Manual / operator** reports: when asked to file a Neo update/activate failure with Heimcloud ops, or when you notice a broken generation that the automatic reporter missed.
 
-        Pair with `neo-update-supervisor`: after you classify a run as **broken** (or a hard activate failure), POST an incident here in addition to any local Hermes notify. Do **not** POST on clean runs.
+        **Automatic path (preferred):** systemd oneshot `neo-heimcloud-ops-report` (credentials `reportUpdateFailures`, default on) hooks `neo-auto-update` / `neo-docker-updater` and POSTs on failure markers — no LLM. Do **not** rely on `neo-update-supervisor` alone; that skill only Telegram-notifies and does not call this skill.
+
+        Still POST here if the operator asks, or if you classify a run as **broken** and want a second channel. Do **not** POST on clean runs.
 
         ## Credentials (this machine)
         - Bearer token file (single line): `${tokenPath}`
