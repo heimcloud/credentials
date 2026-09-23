@@ -1,14 +1,12 @@
-# Durable Hermes publish path for heimcloud-ops-ingest.
+# Durable Hermes publish path for heimcloud-ops-ingest (the only path).
 #
-# Neo publishes plugin skills only via services.hermes-agent.settings.skills.external_dirs
-# (neo-hermes-skills store tree). Hermes -s NAME resolves through skill_view(), which
-# *should* scan external_dirs — but Fleet labs (hattori/thatch) saw the skill in the
-# store tree while `~/.hermes/skills` lacked it, and `hermes … -s heimcloud-ops-ingest`
-# failed closed (ValueError). Operators and tips also inspect HERMES_HOME/skills.
-#
-# Until Neo materializes the whole skillsTree into HERMES_HOME/skills, this plugin
-# symlinks our owned skill name into the local skills dir (rebuild-stable store
-# target, hermes:hermes). Do not edit SOUL.md; no competing oneshot.
+# Hermes -s NAME prefers HERMES_HOME/skills; operators inspect that tree too.
+# Dual publish (this symlink + neo-hermes-skills/external_dirs) made the name
+# ambiguous and hermes -s failed closed on Fleet labs. credentials skill.enabled
+# defaults to false so getSkillServices skips external_dirs; this module still
+# reads skill.conf and symlinks into HERMES_HOME/skills (rebuild-stable store
+# target, hermes:hermes). Until Neo#2 materializes the whole skillsTree here,
+# keep this path. Do not edit SOUL.md; no competing oneshot.
 {...}: {
   flake.modules.nixos.credentials-skill-materialize = {
     config,
