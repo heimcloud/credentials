@@ -1,0 +1,6 @@
+# Heimcloud Ops auto-fix — no secrets in this file.
+# Used only via GIT_CONFIG_GLOBAL from heimcloud-autofix-env (not hermes ~/.gitconfig).
+[credential]
+	useHttpPath = true
+[credential "https://github.com/heimcloud/"]
+	helper = @helper@

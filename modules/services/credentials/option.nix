@@ -75,6 +75,35 @@
                 '';
                 rank = 50;
               };
+              ops = mkOption {
+                type = types.submodule {
+                  options = {
+                    autofixForkPushToken = mkOption {
+                      type = types.nullOr types.str;
+                      default = null;
+                      description = ''
+                        Optional fine-grained GitHub token for the Hermes Ops
+                        auto-fix loop to **push fix branches to heimcloud/neo
+                        only**. Materialized at runtime to
+                        `/run/heimcloud-autofix/github-token` (hermes, 0400,
+                        tmpfs). This plugin never interpolates the value into
+                        the Nix store, unit Environment=, or journal output.
+                        Null / unset = feature off (triage-only fallback).
+                        Prefer a fine-grained token with contents:write on
+                        heimcloud/neo only — not an account SSH key (which
+                        could push to heimcloud/credentials main).
+                      '';
+                      rank = 10;
+                    };
+                  };
+                };
+                default = {};
+                description = ''
+                  Heimcloud Ops host settings (auto-fix GitHub credentials).
+                  Customer Neos leave this empty.
+                '';
+                rank = 60;
+              };
             }
             // lib.neo.mkAppdata "${config.neo.core.volumes.appdata}/credentials"
             // lib.neo.mkServiceMeta {
