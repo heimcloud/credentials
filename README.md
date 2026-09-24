@@ -73,7 +73,7 @@ neo.services.credentials = {
 };
 ```
 
-`deployKeyPrivateKeyPath` (default `/home/homeserver/.ssh/id_ed25519`) is the **single source of truth** for the machine deploy key. Separate oneshot `neo-credentials-deploy-key` derives `${appdata}/credentials/neo-ssh.pub` with `ssh-keygen -y` when the private exists; mismatches or a missing key log a WARNING and write `.deploy-key-status` (`ok|orphan_mismatch|expected_mismatch|missing_key`) then **exit 0** (never degrades activation). Orphan `credentials/neo-ssh` is not deleted. Rotate with `neo-homeserver-ssh-key rotate`, then re-submit the derived pub.
+`deployKeyPrivateKeyPath` (default `/home/homeserver/.ssh/id_ed25519`) is the **single source of truth** for the machine deploy key. Separate oneshot `neo-credentials-deploy-key` derives `${appdata}/credentials/neo-ssh.pub` with `ssh-keygen -y` when the private exists; compares orphan/expected keys by SHA256 fingerprint (no cmp/diffutils); mismatches, helper failures, or a missing key log a WARNING and write `.deploy-key-status` (`ok|orphan_mismatch|expected_mismatch|missing_key|unknown`) then **exit 0** (never degrades activation). Orphan `credentials/neo-ssh` is not deleted. Rotate with `neo-homeserver-ssh-key rotate`, then re-submit the derived pub.
 
 Optional automatic pull: `sync.enable = true` (off by default) + `customerRepoSlug` + `syncDir` + pinned `sync.knownHosts` — see `docs/gitea-ssh-edge-plan.md`. Do not enable until Gitea SSH `:2222` is reachable on the edge.
 
