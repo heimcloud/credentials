@@ -1,5 +1,5 @@
-# Write Neo SSH public key (derived from deploy-key private); ensure ops ingest
-# placeholder; import config-drop secrets → appdata (0600) and write overlay
+# Write REGISTER howto + ops ingest placeholder; soft-reconcile deploy-key pub
+# in a separate unit;  import config-drop secrets → appdata (0600) and write overlay
 # notes for settings.toml (hybrid C).
 # Does NOT create parallel neo.services.public_ip / airvpn / backups / hermes_entitlement.
 {...}: {
@@ -17,8 +17,9 @@
         # Settings → core → plugins → github:heimcloud/credentials
         # Deploy key private path (single source of truth):
         #   ${cfg.deployKeyPrivateKeyPath}
-        # Public material is derived on activation to:
+        # Public material is derived (best-effort) to:
         #   ${cfg.credentialsPath}/neo-ssh.pub
+        # Status: ${cfg.credentialsPath}/.deploy-key-status
         # Then (HQ/ops token for now):
         #
         #   export PROVISIONING_API_TOKEN=…
@@ -63,14 +64,17 @@
           }
         ];
 
+        # Pubkey howto + ops ingest placeholder only. Never runs deploy-key
+        # reconcile here so a mismatch/missing key cannot fail this unit or
+        # block the placeholder on hosts like hattori that have an orphan neo-ssh.
         systemd.services."neo-credentials-ssh-pubkey" = {
-          description = "Reconcile Heimcloud Neo deploy-key public material from private key";
+          description = "Write Heimcloud Neo SSH public key placeholder / howto";
           wantedBy = ["multi-user.target"];
           before = ["multi-user.target"];
           after = ["local-fs.target"];
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
-          path = [pkgs.coreutils pkgs.openssh pkgs.gawk pkgs.gnused];
+          path = [pkgs.coreutils];
           script = lib.concatStringsSep "\n" (
             [
               (lib.neo.mkActivationScriptForDir config {
@@ -93,21 +97,43 @@
                   chmod 0600 "$token"
                 fi
               ''
-              # Single source of truth: derive neo-ssh.pub from deployKeyPrivateKeyPath.
-              # Fail loudly if neoSshPublicKey or orphan credentials/neo-ssh diverge.
-              ''
-                export CREDENTIALS_DEPLOY_KEY=${lib.escapeShellArg cfg.deployKeyPrivateKeyPath}
-                export CREDENTIALS_PUB_OUT=${lib.escapeShellArg "${cfg.credentialsPath}/neo-ssh.pub"}
-                export CREDENTIALS_ORPHAN_PRIVATE=${lib.escapeShellArg "${cfg.credentialsPath}/neo-ssh"}
-                export CREDENTIALS_SSH_KEYGEN=${lib.escapeShellArg "${pkgs.openssh}/bin/ssh-keygen"}
-                ${optionalString (expectedPubFile != null) ''
-                  export CREDENTIALS_EXPECTED_PUB=${lib.escapeShellArg expectedPubFile}
-                ''}
-                ${pkgs.bash}/bin/bash ${reconcileScript}
-                chown ${uid}:${gid} "$CREDENTIALS_PUB_OUT" || true
-              ''
             ]
           );
+        };
+
+        # Best-effort deploy-key check: derive neo-ssh.pub, warn on mismatch /
+        # missing key, write .deploy-key-status, always exit 0 (never degrade).
+        systemd.services."neo-credentials-deploy-key" = {
+          description = "Reconcile Heimcloud deploy-key pub from private (soft warnings only)";
+          wantedBy = ["multi-user.target"];
+          after = [
+            "local-fs.target"
+            "neo-credentials-ssh-pubkey.service"
+          ];
+          before = ["multi-user.target"];
+          serviceConfig.Type = "oneshot";
+          serviceConfig.RemainAfterExit = true;
+          # Soft script always exits 0; do not mark failed on warnings.
+          path = [pkgs.coreutils pkgs.openssh pkgs.gawk pkgs.gnused pkgs.bash];
+          script = ''
+            set -euo pipefail
+            export CREDENTIALS_DEPLOY_KEY=${lib.escapeShellArg cfg.deployKeyPrivateKeyPath}
+            export CREDENTIALS_PUB_OUT=${lib.escapeShellArg "${cfg.credentialsPath}/neo-ssh.pub"}
+            export CREDENTIALS_ORPHAN_PRIVATE=${lib.escapeShellArg "${cfg.credentialsPath}/neo-ssh"}
+            export CREDENTIALS_STATUS_FILE=${lib.escapeShellArg "${cfg.credentialsPath}/.deploy-key-status"}
+            export CREDENTIALS_SSH_KEYGEN=${lib.escapeShellArg "${pkgs.openssh}/bin/ssh-keygen"}
+            ${optionalString (expectedPubFile != null) ''
+              export CREDENTIALS_EXPECTED_PUB=${lib.escapeShellArg expectedPubFile}
+            ''}
+            ${pkgs.bash}/bin/bash ${reconcileScript}
+            if [ -f "$CREDENTIALS_PUB_OUT" ]; then
+              chown ${uid}:${gid} "$CREDENTIALS_PUB_OUT" || true
+            fi
+            if [ -f "$CREDENTIALS_STATUS_FILE" ]; then
+              chown ${uid}:${gid} "$CREDENTIALS_STATUS_FILE" || true
+              chmod 0644 "$CREDENTIALS_STATUS_FILE" || true
+            fi
+          '';
         };
 
         systemd.services."neo-credentials-overlay-import" = mkIf cfg.importOverlay {

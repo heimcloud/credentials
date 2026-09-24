@@ -29,6 +29,7 @@ chmod 600 "$TMP/deploy"
 echo "== reconcile: derive pub =="
 export CREDENTIALS_DEPLOY_KEY="$TMP/deploy"
 export CREDENTIALS_PUB_OUT="$TMP/out/neo-ssh.pub"
+export CREDENTIALS_STATUS_FILE="$TMP/out/.deploy-key-status"
 export CREDENTIALS_SSH_KEYGEN="$SSH_KEYGEN"
 mkdir -p "$TMP/out"
 bash "$RECON"
@@ -36,35 +37,61 @@ bash "$RECON"
 fp1="$("$SSH_KEYGEN" -E sha256 -lf "$TMP/deploy" | awk '{print $2}')"
 fp2="$("$SSH_KEYGEN" -E sha256 -lf "$TMP/out/neo-ssh.pub" | awk '{print $2}')"
 [[ "$fp1" == "$fp2" ]]
+grep -q 'state=ok' "$TMP/out/.deploy-key-status"
 echo "reconcile ok fp match"
 
-echo "== reconcile: orphan mismatch fails =="
+echo "== reconcile: missing key warns, exit 0, no pub write =="
+rm -f "$TMP/out/neo-ssh.pub"
+export CREDENTIALS_DEPLOY_KEY="$TMP/missing-key"
+export CREDENTIALS_STATUS_FILE="$TMP/out/.deploy-key-status-missing"
+set +e
+bash "$RECON" >"$TMP/missing.out" 2>"$TMP/missing.err"
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] || { echo "FAIL: missing key should exit 0 got $rc" >&2; exit 1; }
+grep -q 'WARNING' "$TMP/missing.err"
+grep -q 'state=missing_key' "$TMP/out/.deploy-key-status-missing"
+[[ ! -f "$TMP/out/neo-ssh.pub" ]]
+export CREDENTIALS_DEPLOY_KEY="$TMP/deploy"
+export CREDENTIALS_STATUS_FILE="$TMP/out/.deploy-key-status"
+echo "missing key → warn + exit 0 ok"
+
+echo "== reconcile: orphan mismatch warns, exit 0, keeps orphan, still writes pub =="
 "$SSH_KEYGEN" -t ed25519 -N "" -f "$TMP/orphan" -C "orphan@local" >/dev/null
 export CREDENTIALS_ORPHAN_PRIVATE="$TMP/orphan"
-if bash "$RECON" 2>"$TMP/orphan.err"; then
-  echo "FAIL: expected orphan mismatch to fail" >&2
-  exit 1
-fi
-grep -q 'orphan private key' "$TMP/orphan.err"
+set +e
+bash "$RECON" >"$TMP/orphan.out" 2>"$TMP/orphan.err"
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] || { echo "FAIL: orphan mismatch should exit 0 got $rc" >&2; exit 1; }
+grep -q 'WARNING' "$TMP/orphan.err"
+grep -q 'orphan' "$TMP/orphan.err"
+grep -q 'state=orphan_mismatch' "$TMP/out/.deploy-key-status"
+[[ -f "$TMP/orphan" ]]  # not deleted
+[[ -f "$TMP/out/neo-ssh.pub" ]]
 unset CREDENTIALS_ORPHAN_PRIVATE
-echo "orphan mismatch → fail ok"
+echo "orphan mismatch → warn + exit 0 ok"
 
-echo "== reconcile: expected pub mismatch fails =="
+echo "== reconcile: expected pub mismatch warns, exit 0 =="
 "$SSH_KEYGEN" -t ed25519 -N "" -f "$TMP/other" -C "other@local" >/dev/null
 "$SSH_KEYGEN" -y -f "$TMP/other" >"$TMP/other.pub"
 export CREDENTIALS_EXPECTED_PUB="$TMP/other.pub"
-if bash "$RECON" 2>"$TMP/expected.err"; then
-  echo "FAIL: expected neoSshPublicKey mismatch to fail" >&2
-  exit 1
-fi
-grep -q 'neoSshPublicKey does not match' "$TMP/expected.err"
+set +e
+bash "$RECON" >"$TMP/expected.out" 2>"$TMP/expected.err"
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] || { echo "FAIL: expected mismatch should exit 0 got $rc" >&2; exit 1; }
+grep -q 'WARNING' "$TMP/expected.err"
+grep -q 'neoSshPublicKey' "$TMP/expected.err"
+grep -q 'state=expected_mismatch' "$TMP/out/.deploy-key-status"
 unset CREDENTIALS_EXPECTED_PUB
-echo "expected pub mismatch → fail ok"
+echo "expected pub mismatch → warn + exit 0 ok"
 
 echo "== reconcile: matching expected pub ok =="
 "$SSH_KEYGEN" -y -f "$TMP/deploy" >"$TMP/match.pub"
 export CREDENTIALS_EXPECTED_PUB="$TMP/match.pub"
 bash "$RECON"
+grep -q 'state=ok' "$TMP/out/.deploy-key-status"
 unset CREDENTIALS_EXPECTED_PUB
 echo "matching expected pub ok"
 

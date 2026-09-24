@@ -27,6 +27,7 @@
           after = [
             "network-online.target"
             "neo-credentials-ssh-pubkey.service"
+            "neo-credentials-deploy-key.service"
           ];
           wants = ["network-online.target"];
           serviceConfig = {

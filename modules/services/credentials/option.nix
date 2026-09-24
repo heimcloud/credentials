@@ -17,12 +17,12 @@
                 default = null;
                 description = ''
                   Optional OpenSSH **public** key expected to match
-                  `deployKeyPrivateKeyPath`. Used only as an activation
-                  consistency check — the on-disk `neo-ssh.pub` is always
-                  derived from the private key via `ssh-keygen -y`. Never a
-                  private key. Rotate by rotating the homeserver key (or the
-                  configured private path) and re-running
-                  scripts/register-ssh-key.mjs with the derived pub.
+                  `deployKeyPrivateKeyPath`. Soft consistency check only
+                  (WARNING + `.deploy-key-status`); never fails activation.
+                  When the private key exists, `neo-ssh.pub` is derived via
+                  `ssh-keygen -y`. Never a private key. Rotate by rotating
+                  the homeserver key (or the configured private path) and
+                  re-running scripts/register-ssh-key.mjs with the derived pub.
                 '';
                 rank = 10;
               };
@@ -32,9 +32,12 @@
                 description = ''
                   Single source of truth for this machine's Gitea deploy-key
                   **private** key. Defaults to the Neo homeserver key created
-                  by core activation. Public material under credentialsPath
-                  (`neo-ssh.pub`) is always derived from this file. Do not
-                  invent a parallel `credentials/neo-ssh` private key.
+                  by core activation. When present, public material under
+                  credentialsPath (`neo-ssh.pub`) is derived from this file
+                  by `neo-credentials-deploy-key` (soft warnings only; never
+                  fails the unit). Do not invent a parallel
+                  `credentials/neo-ssh` private key — an orphan mismatch is
+                  warned and left in place.
                 '';
                 rank = 15;
               };
