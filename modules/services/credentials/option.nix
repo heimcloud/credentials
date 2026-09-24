@@ -16,12 +16,30 @@
                 type = types.nullOr types.str;
                 default = null;
                 description = ''
-                  OpenSSH **public** key for read-only Gitea deploy-key access
-                  to this customer's private credentials repo. Never a private
-                  key. Rotate by setting a new value and re-running
-                  scripts/register-ssh-key.mjs.
+                  Optional OpenSSH **public** key expected to match
+                  `deployKeyPrivateKeyPath`. Soft consistency check only
+                  (WARNING + `.deploy-key-status`); never fails activation.
+                  When the private key exists, `neo-ssh.pub` is derived via
+                  `ssh-keygen -y`. Never a private key. Rotate by rotating
+                  the homeserver key (or the configured private path) and
+                  re-running scripts/register-ssh-key.mjs with the derived pub.
                 '';
                 rank = 10;
+              };
+              deployKeyPrivateKeyPath = mkOption {
+                type = types.str;
+                default = "/home/homeserver/.ssh/id_ed25519";
+                description = ''
+                  Single source of truth for this machine's Gitea deploy-key
+                  **private** key. Defaults to the Neo homeserver key created
+                  by core activation. When present, public material under
+                  credentialsPath (`neo-ssh.pub`) is derived from this file
+                  by `neo-credentials-deploy-key` (soft warnings only; never
+                  fails the unit). Do not invent a parallel
+                  `credentials/neo-ssh` private key — an orphan mismatch is
+                  warned and left in place.
+                '';
+                rank = 15;
               };
               customerId = mkOption {
                 type = types.nullOr types.str;
@@ -34,8 +52,10 @@
                 default = null;
                 description = ''
                   Private Gitea repo slug under `customers/<slug>` (Shop Crockford
-                  base32 id). Used by Hermes skill heimcloud-ops-ingest and
-                  documented in meta.json / overlay summary.
+                  base32 id). Used by Hermes skill heimcloud-ops-ingest, the
+                  optional sync timer, and documented in meta.json / overlay
+                  summary. Set only in machine-local settings — never commit a
+                  real slug.
                 '';
                 rank = 25;
               };
@@ -61,7 +81,8 @@
                   Optional path to a checked-out / rsynced private customer
                   config-drop tree (layout_version 2). When null, the importer
                   looks for the drop under `credentialsPath` itself (after
-                  deploy-key sync into appdata).
+                  deploy-key sync into appdata). When `sync.enable` is true this
+                  path is required (git working tree; e.g. appdata/credentials-sync).
                 '';
                 rank = 45;
               };
@@ -74,6 +95,57 @@
                   summarizing non-secret settings.toml keys (hybrid C).
                 '';
                 rank = 50;
+              };
+              sync = mkOption {
+                type = types.submodule {
+                  options = {
+                    enable = mkEnableOption ''
+                      Periodically git-fetch the private customer credentials
+                      repo over SSH (deploy key) into syncDir, rsync into
+                      credentialsPath, and run overlay-import. Off by default
+                      until Gitea SSH on the edge is reachable. Requires
+                      customerRepoSlug and syncDir.
+                    '' {rank = 0;};
+                    remoteHost = mkOption {
+                      type = types.str;
+                      default = "git.heimcloud.site";
+                      description = "Gitea SSH hostname (SSH_DOMAIN).";
+                      rank = 10;
+                    };
+                    remotePort = mkOption {
+                      type = types.port;
+                      default = 2222;
+                      description = "Gitea SSH port advertised to clients (SSH_PORT).";
+                      rank = 20;
+                    };
+                    remoteUser = mkOption {
+                      type = types.str;
+                      default = "git";
+                      description = "SSH user for Gitea (usually git).";
+                      rank = 30;
+                    };
+                    schedule = mkOption {
+                      type = types.str;
+                      default = "*:0/15";
+                      description = "systemd OnCalendar expression for the sync timer.";
+                      rank = 40;
+                    };
+                    knownHosts = mkOption {
+                      type = types.nullOr types.str;
+                      default = null;
+                      description = ''
+                        Pinned SSH host-key line(s) for remoteHost (contents of a
+                        known_hosts entry, e.g. from ssh-keyscan -p 2222). Required
+                        when sync.enable is true — StrictHostKeyChecking=yes.
+                        Never commit a private key here.
+                      '';
+                      rank = 50;
+                    };
+                  };
+                };
+                default = {};
+                description = "Optional automatic pull of the private customer credentials repo.";
+                rank = 55;
               };
               ops = mkOption {
                 type = types.submodule {
