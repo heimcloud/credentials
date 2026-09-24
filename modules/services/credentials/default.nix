@@ -1,5 +1,6 @@
-# Write Neo SSH public key copy; ensure ops ingest placeholder; import config-drop
-# secrets → appdata (0600) and write overlay notes for settings.toml (hybrid C).
+# Write Neo SSH public key (derived from deploy-key private); ensure ops ingest
+# placeholder; import config-drop secrets → appdata (0600) and write overlay
+# notes for settings.toml (hybrid C).
 # Does NOT create parallel neo.services.public_ip / airvpn / backups / hermes_entitlement.
 {...}: {
   flake.modules.nixos.credentials = {
@@ -14,14 +15,18 @@
         # Heimcloud credentials — register Neo SSH public key
         #
         # Settings → core → plugins → github:heimcloud/credentials
-        # Set neo.services.credentials.neoSshPublicKey to your OpenSSH public key.
+        # Deploy key private path (single source of truth):
+        #   ${cfg.deployKeyPrivateKeyPath}
+        # Public material is derived on activation to:
+        #   ${cfg.credentialsPath}/neo-ssh.pub
         # Then (HQ/ops token for now):
         #
         #   export PROVISIONING_API_TOKEN=…
         #   node scripts/register-ssh-key.mjs --customer-id ${cfg.customerId or "<id>"} \
         #     --public-key-file ${cfg.credentialsPath}/neo-ssh.pub
         #
-        # Rotate by re-submitting a new public key. Old deploy keys are removed.
+        # Rotate by rotating the homeserver key (neo-homeserver-ssh-key rotate)
+        # and re-submitting the derived public key. Old deploy keys are removed.
         # Repos stay private. Never commit or upload the private key.
         #
         # Config drop (layout_version 2) syncs into this tree. Secrets land in
@@ -35,14 +40,37 @@
         then cfg.syncDir
         else cfg.credentialsPath;
       dest = cfg.credentialsPath;
+      reconcileScript = ../../../scripts/reconcile-deploy-key.sh;
+      expectedPubFile =
+        if cfg.neoSshPublicKey != null
+        then
+          pkgs.writeText "neo-ssh-expected.pub" (cfg.neoSshPublicKey + "\n")
+        else null;
     in {
       config = mkIf cfg.enabled {
+        assertions = [
+          {
+            assertion = !(cfg.sync.enable && cfg.customerRepoSlug == null);
+            message = "neo.services.credentials.sync.enable requires customerRepoSlug (set only in machine-local settings).";
+          }
+          {
+            assertion = !(cfg.sync.enable && cfg.syncDir == null);
+            message = "neo.services.credentials.sync.enable requires syncDir (git working tree, e.g. appdata/credentials-sync).";
+          }
+          {
+            assertion = !(cfg.sync.enable && cfg.sync.knownHosts == null);
+            message = "neo.services.credentials.sync.enable requires sync.knownHosts (pinned SSH host key for StrictHostKeyChecking=yes).";
+          }
+        ];
+
         systemd.services."neo-credentials-ssh-pubkey" = {
-          description = "Write Heimcloud Neo SSH public key placeholder / copy";
+          description = "Reconcile Heimcloud Neo deploy-key public material from private key";
           wantedBy = ["multi-user.target"];
           before = ["multi-user.target"];
+          after = ["local-fs.target"];
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
+          path = [pkgs.coreutils pkgs.openssh pkgs.gawk pkgs.gnused];
           script = lib.concatStringsSep "\n" (
             [
               (lib.neo.mkActivationScriptForDir config {
@@ -65,14 +93,20 @@
                   chmod 0600 "$token"
                 fi
               ''
+              # Single source of truth: derive neo-ssh.pub from deployKeyPrivateKeyPath.
+              # Fail loudly if neoSshPublicKey or orphan credentials/neo-ssh diverge.
+              ''
+                export CREDENTIALS_DEPLOY_KEY=${lib.escapeShellArg cfg.deployKeyPrivateKeyPath}
+                export CREDENTIALS_PUB_OUT=${lib.escapeShellArg "${cfg.credentialsPath}/neo-ssh.pub"}
+                export CREDENTIALS_ORPHAN_PRIVATE=${lib.escapeShellArg "${cfg.credentialsPath}/neo-ssh"}
+                export CREDENTIALS_SSH_KEYGEN=${lib.escapeShellArg "${pkgs.openssh}/bin/ssh-keygen"}
+                ${optionalString (expectedPubFile != null) ''
+                  export CREDENTIALS_EXPECTED_PUB=${lib.escapeShellArg expectedPubFile}
+                ''}
+                ${pkgs.bash}/bin/bash ${reconcileScript}
+                chown ${uid}:${gid} "$CREDENTIALS_PUB_OUT" || true
+              ''
             ]
-            ++ lib.optional (cfg.neoSshPublicKey != null) (
-              lib.neo.mkActivationScriptForFile config {
-                filePath = "${cfg.credentialsPath}/neo-ssh.pub";
-                content = cfg.neoSshPublicKey + "\n";
-                mode = "0644";
-              }
-            )
           );
         };
 

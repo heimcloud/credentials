@@ -66,12 +66,16 @@ neo.services.credentials = {
   enabled = true;
   customerId = "1";  # Shop customer id
   customerRepoSlug = "<REPO_SLUG>";  # optional; set only in machine-local settings, never commit a real slug
-  # syncDir = "/var/lib/neo/synced-credentials";  # optional checkout path
-  neoSshPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… comment";
+  # syncDir = "/var/neo/DATA/AppData/credentials-sync";  # git working tree when sync.enable
+  # deployKeyPrivateKeyPath = "/home/homeserver/.ssh/id_ed25519";  # default
+  # neoSshPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…";  # optional consistency check
+  # sync.enable = false;  # keep off until edge SSH :2222 works
 };
 ```
 
-`neoSshPublicKey` is `nullOr str`. Rotate by setting a new public key and re-submitting. A copy is written to `${appdata}/credentials/neo-ssh.pub`.
+`deployKeyPrivateKeyPath` (default `/home/homeserver/.ssh/id_ed25519`) is the **single source of truth** for the machine deploy key. Activation derives `${appdata}/credentials/neo-ssh.pub` with `ssh-keygen -y` and fails if `neoSshPublicKey` or a leftover `credentials/neo-ssh` private key diverges. Rotate with `neo-homeserver-ssh-key rotate`, then re-submit the derived pub.
+
+Optional automatic pull: `sync.enable = true` (off by default) + `customerRepoSlug` + `syncDir` + pinned `sync.knownHosts` — see `docs/gitea-ssh-edge-plan.md`. Do not enable until Gitea SSH `:2222` is reachable on the edge.
 
 ### Script (HQ / ops — Bearer token)
 
