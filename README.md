@@ -65,7 +65,7 @@ Heimcloud never needs the **private** key. Paste or set the OpenSSH **public** k
 neo.services.credentials = {
   enabled = true;
   customerId = "1";  # Shop customer id
-  customerRepoSlug = "KAKJWG9RM5";  # optional; also in meta.json
+  customerRepoSlug = "<REPO_SLUG>";  # optional; set only in machine-local settings, never commit a real slug
   # syncDir = "/var/lib/neo/synced-credentials";  # optional checkout path
   neoSshPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… comment";
 };
@@ -225,10 +225,7 @@ Heimcloud ops collects Neo update/activate failures from customer machines via:
    - `neo-credentials-overlay.md` — mapping notes for the operator
 5. With credentials + Hermes enabled (`superviseUpdates`), `skill.enabled = true` lets Neo#2 `getSkillServices` → `skillsTree` / `hermes-neo-skills` own the single publish path (AGENTS.md, `external_dirs`, `HERMES_HOME` symlink). Heimcloud replaces stock `neo-hermes-supervise` so each non-noop supervise run is `hermes chat … -s heimcloud-ops-ingest`, which preloads this skill into the system prompt. On **broken**, Hermes must POST JSON with `Authorization: Bearer $(cat …/ops/ingest.token)`.
 
-Lab private repos (already provisioned — do not recreate):
-
-- hattori → `https://git.heimcloud.site/customers/KAKJWG9RM5`
-- thatch → `https://git.heimcloud.site/customers/W4ZGSG7SYJ`
+Lab machines already have private repos under `customers/<repo_slug>`. Customer slugs are secrets: they live only in the Ops/Credentials environment and on the machine, never in any GitHub repo, PR, commit message, or CI log.
 
 The nix plugin may create a **placeholder** `ops/ingest.token` containing `replace-from-private-repo` only if the file is missing. It never embeds live `OPS_INGEST_SECRET` values. Real tokens live only in the private customer repos / synced appdata.
 

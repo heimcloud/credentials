@@ -49,7 +49,7 @@ Shop entitlement ids keep SKU names (`public_ip`, `airvpn`, `backups`, `hermes`)
 2. Keep `neo.services.credentials` for: repo sync path, SSH pubkey register, ops token install, skill publish, overlay importer.
 3. Importer (oneshot): secrets → appdata 0600; write `neo-credentials-overlay.md` / `imported.env` for non-secret settings.toml keys (hybrid C).
 4. Provisioner stubs rewrite to the new tree (placeholders only).
-5. `layout_version: 2` in meta.json; lab repos hattori `KAKJWG9RM5` / thatch `W4ZGSG7SYJ` migrate carefully.
+5. `layout_version: 2` in meta.json; lab repos (hattori, thatch) migrate carefully. Never write real customer slugs in this repo.
 
 ## Explicit non-goals
 - New `neo.services.public_ip` / `airvpn` / `backups` / `hermes_entitlement` options in the plugin
