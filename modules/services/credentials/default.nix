@@ -114,6 +114,7 @@
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
           # Soft script always exits 0; do not mark failed on warnings.
+          # Fingerprint compare via ssh-keygen; no cmp/diffutils.
           path = [pkgs.coreutils pkgs.openssh pkgs.gawk pkgs.gnused pkgs.bash];
           script = ''
             set -euo pipefail
@@ -143,7 +144,8 @@
           before = ["multi-user.target"];
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
-          path = [pkgs.coreutils pkgs.gnused pkgs.gawk];
+          # grep used when building imported.env; install/chown/tr from coreutils.
+          path = [pkgs.coreutils pkgs.gnused pkgs.gawk pkgs.gnugrep];
           script = ''
             set -euo pipefail
             DROP="${dropRoot}"

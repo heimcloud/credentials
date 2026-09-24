@@ -72,6 +72,67 @@ grep -q 'state=orphan_mismatch' "$TMP/out/.deploy-key-status"
 unset CREDENTIALS_ORPHAN_PRIVATE
 echo "orphan mismatch → warn + exit 0 ok"
 
+echo "== reconcile: matching orphan (same key) → state=ok =="
+cp -f "$TMP/deploy" "$TMP/orphan-same"
+chmod 600 "$TMP/orphan-same"
+export CREDENTIALS_ORPHAN_PRIVATE="$TMP/orphan-same"
+bash "$RECON" >"$TMP/orphan-same.out" 2>"$TMP/orphan-same.err"
+grep -q 'state=ok' "$TMP/out/.deploy-key-status"
+grep -q 'matches source' "$TMP/orphan-same.err"
+unset CREDENTIALS_ORPHAN_PRIVATE
+echo "matching orphan → state=ok"
+
+echo "== reconcile: matching orphan with PATH lacking cmp (regression) =="
+# Shadow cmp with a stub that fails loudly. Script must never invoke it;
+# fingerprint compare must still yield state=ok for the same key.
+NOCMP_BIN="$TMP/nocmp-bin"
+mkdir -p "$NOCMP_BIN"
+cat >"$NOCMP_BIN/cmp" <<'STUB'
+#!/usr/bin/env bash
+echo "cmp: should-not-be-called" >&2
+exit 127
+STUB
+chmod +x "$NOCMP_BIN/cmp"
+# Also prove a PATH with no cmp binary at all still works (drop diffutils).
+STRIPPED_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | while read -r d; do
+  [[ -z "$d" ]] && continue
+  [[ -x "$d/cmp" ]] && continue
+  printf '%s:' "$d"
+done)"
+STRIPPED_PATH="${STRIPPED_PATH%:}"
+export CREDENTIALS_ORPHAN_PRIVATE="$TMP/orphan-same"
+set +e
+env PATH="$NOCMP_BIN:$STRIPPED_PATH" bash "$RECON" >"$TMP/nocmp.out" 2>"$TMP/nocmp.err"
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] || { echo "FAIL: nocmp matching orphan should exit 0 got $rc" >&2; cat "$TMP/nocmp.err" >&2; exit 1; }
+grep -q 'state=ok' "$TMP/out/.deploy-key-status" || {
+  echo "FAIL: expected state=ok without cmp" >&2
+  cat "$TMP/out/.deploy-key-status" >&2
+  cat "$TMP/nocmp.err" >&2
+  exit 1
+}
+if grep -q 'should-not-be-called' "$TMP/nocmp.err"; then
+  echo "FAIL: script still invoked cmp" >&2
+  cat "$TMP/nocmp.err" >&2
+  exit 1
+fi
+# Real mismatch must still be detected via fingerprints (stub never consulted)
+export CREDENTIALS_ORPHAN_PRIVATE="$TMP/orphan"
+set +e
+env PATH="$NOCMP_BIN:$STRIPPED_PATH" bash "$RECON" >"$TMP/nocmp-mis.out" 2>"$TMP/nocmp-mis.err"
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] || { echo "FAIL: nocmp orphan mismatch should exit 0 got $rc" >&2; exit 1; }
+grep -q 'state=orphan_mismatch' "$TMP/out/.deploy-key-status"
+if grep -q 'should-not-be-called' "$TMP/nocmp-mis.err"; then
+  echo "FAIL: mismatch path still invoked cmp" >&2
+  cat "$TMP/nocmp-mis.err" >&2
+  exit 1
+fi
+unset CREDENTIALS_ORPHAN_PRIVATE
+echo "PATH without cmp → ok / orphan_mismatch still correct"
+
 echo "== reconcile: expected pub mismatch warns, exit 0 =="
 "$SSH_KEYGEN" -t ed25519 -N "" -f "$TMP/other" -C "other@local" >/dev/null
 "$SSH_KEYGEN" -y -f "$TMP/other" >"$TMP/other.pub"
