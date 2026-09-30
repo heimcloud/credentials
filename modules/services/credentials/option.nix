@@ -157,8 +157,8 @@
                         Optional fine-grained GitHub token for the Hermes Ops
                         auto-fix loop to **push fix branches to heimcloud/neo
                         only**. Materialized at runtime to
-                        `/run/heimcloud-autofix/github-token` (hermes, 0400,
-                        tmpfs). This plugin never interpolates the value into
+                        `/run/heimcloud-autofix/github-token` (hermes:hermes,
+                        0400, tmpfs; dir hermes:hermes 0700). This plugin never interpolates the value into
                         the Nix store, unit Environment=, or journal output.
                         Null / unset = feature off (triage-only fallback).
                         Prefer a fine-grained token with contents:write on
