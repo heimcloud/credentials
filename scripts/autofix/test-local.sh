@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Local validation of extract + materialize + wrapper (dummy token; no nix).
+# Local validation of extract + materialize + wrapper + git credential helper
+# (dummy token only). Uses nix-build for the shipped wrapper when available.
+# Single-quoted $VARs below are expanded by the wrapped child shell on purpose.
+# shellcheck disable=SC2016
 set +x
 set -euo pipefail
 
@@ -10,7 +13,6 @@ trap 'rm -rf "$TMP"' EXIT
 
 SETTINGS="$TMP/settings.toml"
 TOKEN_FILE="$TMP/run/heimcloud-autofix/github-token"
-GITCONFIG="$TMP/heimcloud-autofix.gitconfig"
 HELPER="$AF/git-credential-helper.sh"
 EXTRACT="$AF/extract-token.py"
 
@@ -52,8 +54,9 @@ echo "== materialize (real script) =="
 export HEIMCLOUD_AUTOFIX_TOKEN_FILE="$TOKEN_FILE"
 export HEIMCLOUD_AUTOFIX_SETTINGS="$SETTINGS"
 export HEIMCLOUD_AUTOFIX_EXTRACT="$EXTRACT"
-export HEIMCLOUD_AUTOFIX_OWNER="$(id -un)"
-export HEIMCLOUD_AUTOFIX_GROUP="$(id -gn)"
+HEIMCLOUD_AUTOFIX_OWNER="$(id -un)"
+HEIMCLOUD_AUTOFIX_GROUP="$(id -gn)"
+export HEIMCLOUD_AUTOFIX_OWNER HEIMCLOUD_AUTOFIX_GROUP
 MAT="$AF/materialize.sh"
 TOKEN_DIR="$(dirname "$TOKEN_FILE")"
 PR_TOKEN_FILE="$TOKEN_DIR/pr-token"
@@ -130,8 +133,7 @@ bash "$MAT" >/dev/null
 check_token "restore"
 echo "edge cases ok (all exit 0)"
 
-echo "== gitconfig + helper =="
-sed "s|@helper@|$HELPER|g" "$AF/gitconfig.in" > "$GITCONFIG"
+echo "== helper (raw source) =="
 export HEIMCLOUD_AUTOFIX_TOKEN_FILE="$TOKEN_FILE"
 out="$(printf 'protocol=https\nhost=github.com\npath=heimcloud/neo\n\n' | "$HELPER" get)"
 if ! grep -q 'username=x-access-token' <<<"$out"; then
@@ -148,15 +150,226 @@ if [[ -n "$out2" ]]; then
   echo "FAIL: helper should refuse other/repo" >&2
   exit 1
 fi
+unset out out2
 echo "helper ok (scoped)"
 
-echo "== wrapper --check / env =="
-WRAPPER="$TMP/heimcloud-autofix-env"
-sed "s|@gitconfig@|$GITCONFIG|g" "$AF/heimcloud-autofix-env.sh" > "$WRAPPER"
-chmod +x "$WRAPPER"
+# --- Build the wrapper the way it ships -------------------------------------
+# The original bug only existed after build-time substitution, so the git
+# checks below run against built wrappers with NO helper/git overrides.
+echo "== build wrapper =="
+BUILT_SED="$TMP/sed/bin/heimcloud-autofix-env"
+SED_HELPER="$TMP/sed/bin/heimcloud-autofix-git-credential"
+mkdir -p "$TMP/sed/bin"
+install -m 0755 "$HELPER" "$SED_HELPER"
+# Same substitution as package.nix (replaceStrings = replace every occurrence).
+sed -e "s|@helper@|$SED_HELPER|g" -e "s|@git@|$(command -v git)|g" \
+  "$AF/heimcloud-autofix-env.sh" > "$BUILT_SED"
+chmod 0755 "$BUILT_SED"
+BUILT_NIX=""
+NIX_HELPER=""
+if command -v nix-build >/dev/null 2>&1 && nix-instantiate --find-file nixpkgs >/dev/null 2>&1; then
+  mapfile -t nix_out < <(nix-build "$AF/package.nix" --arg pkgs 'import <nixpkgs> {}' \
+    -A envWrapper -A helper --no-out-link)
+  if [[ "${#nix_out[@]}" != 2 ]]; then
+    echo "FAIL: nix-build of scripts/autofix/package.nix" >&2
+    exit 1
+  fi
+  BUILT_NIX="${nix_out[0]}/bin/heimcloud-autofix-env"
+  NIX_HELPER="${nix_out[1]}/bin/heimcloud-autofix-git-credential"
+  [[ -x "$BUILT_NIX" && -x "$NIX_HELPER" ]] || { echo "FAIL: nix outputs missing" >&2; exit 1; }
+  if ! grep -qF "$NIX_HELPER" "$BUILT_NIX"; then
+    echo "FAIL: nix wrapper does not reference the helper store path" >&2
+    exit 1
+  fi
+  echo "nix-built wrapper: $BUILT_NIX"
+else
+  echo "SKIP nix build (nix-build or <nixpkgs> unavailable); sed-substituted wrapper only"
+fi
+for w in "$BUILT_SED" ${BUILT_NIX:+"$BUILT_NIX"}; do
+  bash -n "$w"
+  if grep -qE '@(helper|git)@' "$w"; then
+    echo "FAIL: unsubstituted placeholder in $w" >&2
+    exit 1
+  fi
+done
+echo "built wrappers ok (no leftover placeholders)"
+
+# --- Hermetic git environment -------------------------------------------------
+export HOME="$TMP/home"
+export XDG_CONFIG_HOME="$TMP/xdg"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_TERMINAL_PROMPT=0
+unset GIT_CONFIG_GLOBAL GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ASKPASS SSH_ASKPASS || true
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+# Neutral cwd: no repository-local config (e.g. this checkout) leaks in.
+cd "$TMP"
+# A "caller" gitconfig with a generic decoy helper and an identity: the wrapper
+# must keep the identity but reset the helper list for github.com/heimcloud/.
+DECOY_HOME="$TMP/home-decoy"
+mkdir -p "$DECOY_HOME"
+cat > "$DECOY_HOME/.gitconfig" <<'EOF'
+[user]
+	name = Decoy Caller
+[credential]
+	helper = "!f() { echo username=decoy; echo password=decoy-pass; }; f"
+EOF
+
+# fill <wrapper|-> <host> <path>: git credential fill output (captured only).
+fill() {
+  local w="$1"
+  shift
+  if [[ "$w" == "-" ]]; then
+    printf 'protocol=https\nhost=%s\npath=%s\n\n' "$1" "$2" | git credential fill 2>/dev/null || true
+  else
+    printf 'protocol=https\nhost=%s\npath=%s\n\n' "$1" "$2" | "$w" git credential fill 2>/dev/null || true
+  fi
+}
+expect_token() { # <label> <output>
+  grep -qx 'username=x-access-token' <<<"$2" || { echo "FAIL: $1: username" >&2; exit 1; }
+  grep -qx "password=$DUMMY" <<<"$2" || { echo "FAIL: $1: password" >&2; exit 1; }
+}
+expect_none() { # <label> <output>
+  if grep -q '^password=' <<<"$2" || [[ "$2" == *"$DUMMY"* ]]; then
+    echo "FAIL: $1: expected no credential" >&2
+    exit 1
+  fi
+}
+
+# git_suite <label> <wrapper> <expected helper path>
+git_suite() {
+  local label="$1" w="$2" want="$3" out rc
+  echo "-- git suite: $label"
+  out="$("$w" --check 2>&1)" && rc=0 || rc=$?
+  [[ "$out" != *"$DUMMY"* ]] || { echo "FAIL: $label: --check leaked token" >&2; exit 1; }
+  [[ "$rc" == 0 ]] || { echo "FAIL: $label: --check rc=$rc: $out" >&2; exit 1; }
+  out="$("$w" git config --get-urlmatch credential.helper https://github.com/heimcloud/neo || true)"
+  [[ "$out" == "$want" ]] || { echo "FAIL: $label: get-urlmatch='$out' want '$want'" >&2; exit 1; }
+  out="$("$w" bash -c 'printf %s "${GIT_CONFIG_GLOBAL-UNSET}"')"
+  [[ "$out" == "UNSET" ]] || { echo "FAIL: $label: GIT_CONFIG_GLOBAL set" >&2; exit 1; }
+  expect_token "$label heimcloud/neo.git" "$("$w" bash -c 'printf "protocol=https\nhost=github.com\npath=heimcloud/neo.git\n\n" | git credential fill 2>/dev/null')"
+  expect_token "$label heimcloud/neo" "$(fill "$w" github.com heimcloud/neo)"
+  expect_none "$label other/repo.git" "$(fill "$w" github.com other/repo.git)"
+  expect_none "$label heimcloudx/neo.git" "$(fill "$w" github.com heimcloudx/neo.git)"
+  expect_none "$label gitlab.com/heimcloud" "$(fill "$w" gitlab.com heimcloud/neo.git)"
+  expect_none "$label no wrapper" "$(fill - github.com heimcloud/neo.git)"
+  # Caller config kept (identity), generic decoy helper reset for heimcloud/.
+  out="$(HOME="$DECOY_HOME" "$w" git config --get user.name || true)"
+  [[ "$out" == "Decoy Caller" ]] || { echo "FAIL: $label: caller gitconfig dropped" >&2; exit 1; }
+  expect_token "$label decoy reset" "$(HOME="$DECOY_HOME" fill "$w" github.com heimcloud/neo.git)"
+  # Ambient GIT_CONFIG_COUNT entries are preserved (appended after).
+  out="$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=Ambient \
+    "$w" git config --get user.name || true)"
+  [[ "$out" == "Ambient" ]] || { echo "FAIL: $label: ambient GIT_CONFIG_COUNT lost" >&2; exit 1; }
+  expect_token "$label ambient count" "$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name \
+    GIT_CONFIG_VALUE_0=Ambient fill "$w" github.com heimcloud/neo.git)"
+  expect_token "$label bogus count" "$(GIT_CONFIG_COUNT=bogus fill "$w" github.com heimcloud/neo.git)"
+  echo "   $label ok"
+}
+
+echo "== wrapper git credential (built wrappers, no overrides) =="
 export HEIMCLOUD_AUTOFIX_TOKEN_FILE="$TOKEN_FILE"
-export HEIMCLOUD_AUTOFIX_GITCONFIG="$GITCONFIG"
 export HEIMCLOUD_AUTOFIX_PR_TOKEN_FILE="$PR_TOKEN_FILE"
+unset HEIMCLOUD_AUTOFIX_GIT_HELPER HEIMCLOUD_AUTOFIX_GIT || true
+git_suite "sed-substituted" "$BUILT_SED" "$SED_HELPER"
+if [[ -n "$BUILT_NIX" ]]; then
+  git_suite "nix-built" "$BUILT_NIX" "$NIX_HELPER"
+fi
+# Raw source: placeholders are not executable → PATH lookup of the helper.
+RAW="$AF/heimcloud-autofix-env.sh"
+# (shims only add env; the wrapper under test is the unmodified source file)
+printf '#!/usr/bin/env bash\nPATH="%s:$PATH" exec "%s" "$@"\n' "$TMP/sed/bin" "$RAW" > "$TMP/raw-path"
+printf '#!/usr/bin/env bash\nHEIMCLOUD_AUTOFIX_GIT_HELPER="%s" exec "%s" "$@"\n' "$SED_HELPER" "$RAW" > "$TMP/raw-override"
+chmod 0755 "$TMP/raw-path" "$TMP/raw-override"
+git_suite "raw source + PATH helper" "$TMP/raw-path" "$SED_HELPER"
+git_suite "raw source + override" "$TMP/raw-override" "$SED_HELPER"
+
+echo "== --check failure modes =="
+# check_fails <label> <expected stderr substring> [env...]
+check_fails() {
+  local label="$1" want="$2" out rc
+  shift 2
+  out="$(env "$@" "$RAW" --check 2>&1)" && rc=0 || rc=$?
+  [[ "$out" != *"$DUMMY"* ]] || { echo "FAIL: $label: --check leaked token" >&2; exit 1; }
+  [[ "$rc" != 0 ]] || { echo "FAIL: $label: --check should fail" >&2; exit 1; }
+  [[ "$out" == *"$want"* ]] || { echo "FAIL: $label: message '$out'" >&2; exit 1; }
+  echo "   $label → rc=$rc: $out"
+}
+check_fails "helper missing" "not found" HEIMCLOUD_AUTOFIX_GIT_HELPER=/nonexistent/helper
+printf '#!/bin/sh\nexit 0\n' > "$TMP/empty-helper"
+chmod 0755 "$TMP/empty-helper"
+check_fails "helper returns nothing" "returned no password" \
+  HEIMCLOUD_AUTOFIX_GIT_HELPER="$TMP/empty-helper"
+mkdir -p "$TMP/home-specific"
+cat > "$TMP/home-specific/.gitconfig" <<'EOF'
+[credential "https://github.com/heimcloud/neo"]
+	helper = /nonexistent/more-specific
+EOF
+check_fails "get-urlmatch mismatch" "does not resolve" \
+  HEIMCLOUD_AUTOFIX_GIT_HELPER="$SED_HELPER" HOME="$TMP/home-specific"
+mkdir -p "$TMP/nogit"
+ln -s "$(command -v bash)" "$TMP/nogit/bash"
+check_fails "git missing" "git not found" \
+  HEIMCLOUD_AUTOFIX_GIT_HELPER="$SED_HELPER" HEIMCLOUD_AUTOFIX_GIT=/nonexistent/git \
+  PATH="$TMP/nogit"
+echo "--check failure modes ok"
+
+WRAPPER="$BUILT_SED"
+e2e_https_push() {
+  # Real `git push https://github.com/heimcloud/neo` under the built wrapper,
+  # inside a private network namespace (nothing can reach the internet):
+  # github.com:443 resolves to a local HTTPS git http-backend that requires
+  # Basic auth x-access-token:<dummy>. url.insteadOf would rewrite the URL
+  # before credential lookup, so curl's resolve override is used instead.
+  set -euo pipefail
+  ip link set lo up
+  local E="$TMP/e2e" srv rc out
+  mkdir -p "$E/root/heimcloud" "$E/root/other"
+  git init -q --bare "$E/root/heimcloud/neo.git"
+  git init -q --bare "$E/root/other/neo.git"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=github.com \
+    -addext subjectAltName=DNS:github.com -keyout "$E/key.pem" -out "$E/cert.pem" 2>/dev/null
+  printf 'x-access-token:%s' "$DUMMY" > "$E/auth"
+  E2E_EXPECT_AUTH_FILE="$E/auth" python3 "$AF/test-https-git-server.py" \
+    "$E/root" "$E/cert.pem" "$E/key.pem" 443 "$E/ready" 2>"$E/server.log" &
+  srv=$!
+  trap 'kill "$srv" 2>/dev/null || true' RETURN
+  for _ in $(seq 100); do [[ -f "$E/ready" ]] && break; sleep 0.1; done
+  [[ -f "$E/ready" ]] || { echo "FAIL: e2e server did not start" >&2; cat "$E/server.log" >&2; return 1; }
+  git init -q "$E/work"
+  git -C "$E/work" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m e2e
+  local -a gc=(-c http.curloptResolve=github.com:443:127.0.0.1 -c "http.sslCAInfo=$E/cert.pem")
+  # Without the wrapper: the reported symptom.
+  out="$(git -C "$E/work" "${gc[@]}" push -q https://github.com/heimcloud/neo HEAD:refs/heads/e2e 2>&1)" && rc=0 || rc=$?
+  [[ "$rc" != 0 && "$out" == *"could not read Username"* ]] || { echo "FAIL: e2e: unwrapped push should fail (rc=$rc)" >&2; return 1; }
+  # Other owner under the wrapper: helper not used → no credentials.
+  out="$("$WRAPPER" git -C "$E/work" "${gc[@]}" push -q https://github.com/other/neo HEAD:refs/heads/e2e 2>&1)" && rc=0 || rc=$?
+  [[ "$rc" != 0 && "$out" == *"could not read Username"* ]] || { echo "FAIL: e2e: other-owner push should fail (rc=$rc)" >&2; return 1; }
+  # heimcloud/neo under the wrapper: succeeds with the dummy token.
+  out="$("$WRAPPER" git -C "$E/work" "${gc[@]}" push -q https://github.com/heimcloud/neo HEAD:refs/heads/e2e 2>&1)" && rc=0 || rc=$?
+  [[ "$out" != *"$DUMMY"* ]] || { echo "FAIL: e2e: push output leaked token" >&2; return 1; }
+  [[ "$rc" == 0 ]] || { echo "FAIL: e2e: wrapped push rc=$rc: $out" >&2; return 1; }
+  [[ "$(git -C "$E/root/heimcloud/neo.git" rev-parse refs/heads/e2e)" == "$(git -C "$E/work" rev-parse HEAD)" ]] ||
+    { echo "FAIL: e2e: ref not pushed" >&2; return 1; }
+  if git -C "$E/root/other/neo.git" rev-parse -q --verify refs/heads/e2e >/dev/null; then
+    echo "FAIL: e2e: other owner received a push" >&2
+    return 1
+  fi
+  echo "e2e https push ok (unwrapped: prompt error; other owner: refused; heimcloud/neo: pushed)"
+}
+echo "== e2e https push (private netns) =="
+if [[ -n "$BUILT_NIX" ]]; then
+  WRAPPER="$BUILT_NIX"
+fi
+if command -v unshare >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1 &&
+  command -v ip >/dev/null 2>&1 && unshare -rn true 2>/dev/null; then
+  export TMP AF DUMMY WRAPPER
+  unshare -rn bash -c "$(declare -f e2e_https_push); e2e_https_push"
+else
+  echo "SKIP e2e push (needs unshare -rn, ip, openssl); git credential fill checks above still ran"
+fi
+
+echo "== wrapper --check / env =="
+WRAPPER="$BUILT_SED"
 "$WRAPPER" --check
 # Child sees GH_TOKEN; parent dump must not be used — verify via env print in child
 child="$("$WRAPPER" bash -c 'printf %s "$GH_TOKEN"')"
@@ -215,6 +428,8 @@ if [[ "$out3" != "TOK=EMPTY" ]]; then
   echo "FAIL: expected no GH_TOKEN when absent, got $out3" >&2
   exit 1
 fi
+out5="$("$WRAPPER" bash -c 'echo C=${GIT_CONFIG_COUNT-UNSET}')"
+[[ "$out5" == "C=UNSET" ]] || { echo "FAIL: git helper configured without token, got $out5" >&2; exit 1; }
 echo "wrapper ok"
 
 echo "== materialize absent key does not fail =="

@@ -152,9 +152,9 @@ Full option path: `neo.services.credentials.ops.autofixForkPushToken` (default `
 | Token file | `/run/heimcloud-autofix/github-token` — tmpfs, file mode `0400`, owner `hermes:hermes` (`services.hermes-agent.{user,group}`) |
 | Token dir | `/run/heimcloud-autofix` — mode `0700`, owner `hermes:hermes`. The tmpfiles rule uses the same owner as the token (tmpfiles re-applies it at boot and on every switch); it falls back to `root` only when the Hermes user/group is not declared, since an unknown user would fail `systemd-tmpfiles`. Materialize also re-chowns/chmods the dir on every run, so a dir left with the wrong owner is repaired |
 | Materialize | Activation script (+ optional `heimcloud-autofix-materialize-token.service`) reads `/etc/neo/settings.toml` at **runtime** and writes the file (never puts the value in unit `Environment=`, never interpolates it into Nix) |
-| Wrapper | `heimcloud-autofix-env <cmd…>` — for the child only: `GIT_CONFIG_GLOBAL` → store gitconfig with `credential."https://github.com/heimcloud/".helper` + `credential.useHttpPath = true`, and `GH_TOKEN` from the token file |
+| Wrapper | `heimcloud-autofix-env <cmd…>` — for the child only: appends to `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` `credential."https://github.com/heimcloud/".helper` (reset, then the helper's store path) + `credential."https://github.com/heimcloud/".useHttpPath = true`, and sets `GH_TOKEN` from the token file. The caller's own git config (`~/.gitconfig` identity etc.) is kept |
 | Helper | `heimcloud-autofix-git-credential` — git credential helper that reads the token file |
-| Check | `heimcloud-autofix-env --check` → exit `0` if token file present/non-empty, else `1` |
+| Check | `heimcloud-autofix-env --check` → exit `0` only if the token file is present/non-empty/readable **and**, under the wrapper, `git config --get-urlmatch credential.helper https://github.com/heimcloud/neo` resolves to the helper and `git credential fill` (`path=heimcloud/neo.git`) returns a non-empty password (never printed). Otherwise `1` — silently when there is no token (feature off), with a one-line reason on stderr for a git/helper problem |
 
 `nix.conf` `access-tokens`, Hermes `~/.gitconfig`, and `gh` `hosts.yml` are **not** touched. Nix flake fetches, `neo update` / auto-update stay unauthenticated.
 
@@ -194,7 +194,8 @@ push to `heimcloud/credentials` **main** (production).
 
 `gh` itself cannot path-scope a token — the real limit is the fine-grained
 token’s repository selection. The git credential helper is path-scoped to
-`https://github.com/heimcloud/` via `GIT_CONFIG_GLOBAL` only for the wrapped child.
+`https://github.com/heimcloud/` via `GIT_CONFIG_*` environment config, only for
+the wrapped child; other owners/hosts never reach it.
 
 ### Future: upstream PR credential
 
@@ -225,6 +226,7 @@ provisioner/    # Heimcloud-side job worker (not a Neo service)
               # run.mjs, attach-key.mjs, sync-deploy-keys.mjs
 scripts/register-ssh-key.mjs
 scripts/autofix/          # extract-token, git-credential helper, env wrapper, materialize
+                          # package.nix builds them (module + test-local.sh share it)
 docs/ssh-access-design.md
 docs/config-drop-design.md
 ```

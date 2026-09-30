@@ -14,41 +14,14 @@
   }:
     with lib; let
       cfg = config.neo.services.credentials;
-      scriptsDir = ../../../scripts/autofix;
-
-      # Strip the repo shebang; pin python3 from pkgs so PATH is enough.
-      extractBody = let
-        raw = builtins.readFile (scriptsDir + "/extract-token.py");
-        lines = splitString "\n" raw;
-        body =
-          if lines != [] && hasPrefix "#!" (head lines)
-          then concatStringsSep "\n" (tail lines)
-          else raw;
-      in
-        body;
-
-      extract = pkgs.writeScriptBin "heimcloud-autofix-extract-token" ''
-        #!${pkgs.python3}/bin/python3
-        ${extractBody}
-      '';
-
-      helper = pkgs.writeShellScriptBin "heimcloud-autofix-git-credential" (
-        builtins.readFile (scriptsDir + "/git-credential-helper.sh")
-      );
-
-      gitconfig = pkgs.writeText "heimcloud-autofix.gitconfig" (
-        replaceStrings
-        ["@helper@"]
-        ["${helper}/bin/heimcloud-autofix-git-credential"]
-        (builtins.readFile (scriptsDir + "/gitconfig.in"))
-      );
-
-      envWrapper = pkgs.writeShellScriptBin "heimcloud-autofix-env" (
-        replaceStrings
-        ["@gitconfig@"]
-        ["${gitconfig}"]
-        (builtins.readFile (scriptsDir + "/heimcloud-autofix-env.sh"))
-      );
+      # Store scripts (no secrets) — built by scripts/autofix/package.nix so
+      # scripts/autofix/test-local.sh can build and test the exact same thing.
+      autofixPkgs = import ../../../scripts/autofix/package.nix {
+        inherit pkgs lib;
+        owner = hermesUser;
+        group = hermesGroup;
+      };
+      inherit (autofixPkgs) extract helper envWrapper materialize;
 
       # Owner of the token dir + file: the Hermes gateway user/group
       # (services.hermes-agent.{user,group}, default "hermes"). `or` keeps
@@ -62,13 +35,6 @@
       hermesDeclared =
         (config.users.users ? ${hermesUser})
         && (config.users.groups ? ${hermesGroup});
-
-      materialize = pkgs.writeShellScript "heimcloud-autofix-materialize" (
-        replaceStrings
-        ["@extract@" "@owner@" "@group@"]
-        ["${extract}/bin/heimcloud-autofix-extract-token" hermesUser hermesGroup]
-        (builtins.readFile (scriptsDir + "/materialize.sh"))
-      );
 
       tokenDir = "/run/heimcloud-autofix";
       tokenPath = "${tokenDir}/github-token";
