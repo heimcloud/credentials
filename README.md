@@ -149,7 +149,8 @@ Full option path: `neo.services.credentials.ops.autofixForkPushToken` (default `
 
 | Piece | Detail |
 |-------|--------|
-| Token file | `/run/heimcloud-autofix/github-token` — tmpfs, dir mode `0700`, file mode `0400`, owner `hermes` |
+| Token file | `/run/heimcloud-autofix/github-token` — tmpfs, file mode `0400`, owner `hermes:hermes` (`services.hermes-agent.{user,group}`) |
+| Token dir | `/run/heimcloud-autofix` — mode `0700`, owner `hermes:hermes`. The tmpfiles rule uses the same owner as the token (tmpfiles re-applies it at boot and on every switch); it falls back to `root` only when the Hermes user/group is not declared, since an unknown user would fail `systemd-tmpfiles`. Materialize also re-chowns/chmods the dir on every run, so a dir left with the wrong owner is repaired |
 | Materialize | Activation script (+ optional `heimcloud-autofix-materialize-token.service`) reads `/etc/neo/settings.toml` at **runtime** and writes the file (never puts the value in unit `Environment=`, never interpolates it into Nix) |
 | Wrapper | `heimcloud-autofix-env <cmd…>` — for the child only: `GIT_CONFIG_GLOBAL` → store gitconfig with `credential."https://github.com/heimcloud/".helper` + `credential.useHttpPath = true`, and `GH_TOKEN` from the token file |
 | Helper | `heimcloud-autofix-git-credential` — git credential helper that reads the token file |
@@ -171,7 +172,10 @@ fi
 
 When the key is missing/null: no token file, wrapper still runs the command
 without credentials, `--check` is non-zero. Activation **never** fails for a
-missing token (or a missing `hermes` user).
+missing token (or a missing `hermes` user/group); any unexpected materialize
+error is logged as a warning and exits `0` (triage-only). Materialize is
+idempotent and only touches `github-token` (never the reserved `pr-token`).
+A token file the caller cannot read counts as absent (`--check` non-zero).
 
 ### Token scope (recommended)
 
@@ -197,7 +201,7 @@ token’s repository selection. The git credential helper is path-scoped to
 A later **GitHub App** (`heimcloud-autofix`) may add a second credential for
 opening PRs on `madebydamo/neo`. The wrapper already reserves
 `/run/heimcloud-autofix/pr-token` → `GH_PR_TOKEN` for that child process when
-present; App/JWT support is **not** implemented yet. Callers can keep using
+present and readable (unreadable/empty is ignored); App/JWT support is **not** implemented yet. Callers can keep using
 `heimcloud-autofix-env` unchanged.
 
 ### Store / logs / Environment

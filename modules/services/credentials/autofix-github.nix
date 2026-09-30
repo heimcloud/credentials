@@ -50,22 +50,45 @@
         (builtins.readFile (scriptsDir + "/heimcloud-autofix-env.sh"))
       );
 
+      # Owner of the token dir + file: the Hermes gateway user/group
+      # (services.hermes-agent.{user,group}, default "hermes"). `or` keeps
+      # evaluation working when the hermes-agent module is not imported.
+      hermesUser = config.services.hermes-agent.user or "hermes";
+      hermesGroup = config.services.hermes-agent.group or "hermes";
+
+      # Only reference the owner in tmpfiles when NixOS actually declares it:
+      # systemd-tmpfiles fails the whole run (systemd-tmpfiles-setup /
+      # -resetup) on an unknown user/group, which must never happen.
+      hermesDeclared =
+        (config.users.users ? ${hermesUser})
+        && (config.users.groups ? ${hermesGroup});
+
       materialize = pkgs.writeShellScript "heimcloud-autofix-materialize" (
         replaceStrings
-        ["@extract@"]
-        ["${extract}/bin/heimcloud-autofix-extract-token"]
+        ["@extract@" "@owner@" "@group@"]
+        ["${extract}/bin/heimcloud-autofix-extract-token" hermesUser hermesGroup]
         (builtins.readFile (scriptsDir + "/materialize.sh"))
       );
 
-      tokenPath = "/run/heimcloud-autofix/github-token";
+      tokenDir = "/run/heimcloud-autofix";
+      tokenPath = "${tokenDir}/github-token";
     in {
       config = mkIf cfg.enabled {
         # Store scripts only (no secrets). Ops job-queue runner calls the wrapper.
         environment.systemPackages = [envWrapper helper extract];
 
-        # Placeholder dir on tmpfs; materialize re-chowns to hermes when that user exists.
+        # Token dir on tmpfs, owned by the same user/group materialize chowns the
+        # token to. tmpfiles re-applies owner/mode at boot and on every switch
+        # (systemd-tmpfiles-resetup), so it must match — a root owner here locked
+        # hermes out of the token. Falls back to root only when the hermes
+        # user/group is not declared (materialize then skips anyway).
+        # `d` never touches dir contents (github-token, reserved pr-token).
         systemd.tmpfiles.rules = [
-          "d /run/heimcloud-autofix 0700 root root -"
+          (
+            if hermesDeclared
+            then "d ${tokenDir} 0700 ${hermesUser} ${hermesGroup} -"
+            else "d ${tokenDir} 0700 root root -"
+          )
         ];
 
         # Run on every switch/boot so settings.toml edits are picked up even when
@@ -81,6 +104,8 @@
         # settings edits without a full switch — same script, still no secret in unit text.
         systemd.services.heimcloud-autofix-materialize-token = {
           description = "Materialize Heimcloud Ops autofix fork-push GitHub token to tmpfs";
+          # Activation PATH already has these; plain units do not ship getent.
+          path = [pkgs.coreutils pkgs.getent];
           serviceConfig = {
             Type = "oneshot";
             ExecStart = "${materialize}";

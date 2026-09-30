@@ -28,8 +28,14 @@ if [[ $# -lt 1 ]]; then
   exit 2
 fi
 
+# Usable = non-empty AND readable by the caller (a root-owned leftover must
+# read as "no token" → triage path, never a wrapper failure).
+usable() {
+  [[ -s "$1" && -r "$1" ]]
+}
+
 if [[ "$1" == "--check" ]]; then
-  if [[ -s "$TOKEN_FILE" ]]; then
+  if usable "$TOKEN_FILE"; then
     exit 0
   fi
   exit 1
@@ -47,17 +53,26 @@ fi
 # Drop any ambient GitHub auth so autofix never inherits a broader token.
 unset GH_TOKEN GH_PR_TOKEN GITHUB_TOKEN GIT_CONFIG_GLOBAL || true
 
-if [[ -s "$TOKEN_FILE" ]]; then
+if usable "$TOKEN_FILE"; then
   if [[ -n "$GITCONFIG" && "$GITCONFIG" != "@gitconfig@" && -f "$GITCONFIG" ]]; then
     export GIT_CONFIG_GLOBAL="$GITCONFIG"
   fi
   # Word-splitting intentionally avoided; token is a single line.
-  GH_TOKEN="$(tr -d '\n' < "$TOKEN_FILE")"
-  export GH_TOKEN
-  # Future optional upstream-PR credential (GitHub App) — export if present.
-  if [[ -s "$PR_TOKEN_FILE" ]]; then
-    GH_PR_TOKEN="$(tr -d '\n' < "$PR_TOKEN_FILE")"
-    export GH_PR_TOKEN
+  GH_TOKEN="$(tr -d '\n' < "$TOKEN_FILE" 2>/dev/null || true)"
+  if [[ -n "$GH_TOKEN" ]]; then
+    export GH_TOKEN
+  else
+    unset GH_TOKEN GIT_CONFIG_GLOBAL
+  fi
+  # Future optional upstream-PR credential (GitHub App) — export if present
+  # and readable; absent/unreadable/empty is silently ignored.
+  if usable "$PR_TOKEN_FILE"; then
+    GH_PR_TOKEN="$(tr -d '\n' < "$PR_TOKEN_FILE" 2>/dev/null || true)"
+    if [[ -n "$GH_PR_TOKEN" ]]; then
+      export GH_PR_TOKEN
+    else
+      unset GH_PR_TOKEN
+    fi
   fi
 fi
 
