@@ -16,6 +16,22 @@
         is now provided by reporter.neo. Use [services.reporter.skill] instead and
         delete [services.credentials.skill] from settings.toml.
       '';
+      # Removed: services.credentials.ops.autofixForkPushToken (moved to
+      # autofix.neo). Kept as a hidden catch-all so other plugins can still
+      # probe `cred.ops.<key> or null`, and so a leftover key fails with a
+      # pointer instead of "option does not exist". (mkRemovedOptionModule
+      # cannot reach into this submodule.)
+      config.assertions = [
+        {
+          assertion = !(config.neo.services.credentials.ops ? autofixForkPushToken);
+          message = ''
+            neo.services.credentials.ops.autofixForkPushToken has been removed:
+            the autofix GitHub token now belongs to the autofix.neo plugin. Set
+            [services.autofix.github] tokenFile (preferred) or token, then drop
+            [services.credentials.ops] from settings.toml.
+          '';
+        }
+      ];
       options.neo.services.credentials = mkOption {
         type = types.submodule {
           options =
@@ -163,34 +179,12 @@
                 description = "Optional automatic pull of the private customer credentials repo.";
                 rank = 55;
               };
-              ops = mkOption {
-                type = types.submodule {
-                  options = {
-                    autofixForkPushToken = mkOption {
-                      type = types.nullOr types.str;
-                      default = null;
-                      description = ''
-                        Optional fine-grained GitHub token for the Hermes Ops
-                        auto-fix loop to **push fix branches to heimcloud/neo
-                        only**. Materialized at runtime to
-                        `/run/heimcloud-autofix/github-token` (hermes:hermes,
-                        0400, tmpfs; dir hermes:hermes 0700). This plugin never interpolates the value into
-                        the Nix store, unit Environment=, or journal output.
-                        Null / unset = feature off (triage-only fallback).
-                        Prefer a fine-grained token with contents:write on
-                        heimcloud/neo only — not an account SSH key (which
-                        could push to heimcloud/credentials main).
-                      '';
-                      rank = 10;
-                    };
-                  };
-                };
+              ops = lib.mkOption {
+                type = types.attrsOf types.anything;
                 default = {};
-                description = ''
-                  Heimcloud Ops host settings (auto-fix GitHub credentials).
-                  Customer Neos leave this empty.
-                '';
-                rank = 60;
+                internal = true;
+                visible = false;
+                description = "Removed (autofix token moved to autofix.neo). Any key here fails evaluation with a pointer.";
               };
             }
             // lib.neo.mkAppdata "${config.neo.core.volumes.appdata}/credentials"
