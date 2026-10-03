@@ -52,7 +52,7 @@
                 default = null;
                 description = ''
                   Private Gitea repo slug under `customers/<slug>` (Shop Crockford
-                  base32 id). Used by Hermes skill heimcloud-ops-ingest, the
+                  base32 id). Sent as the incident reporter id (reporter.neo), the
                   optional sync timer, and documented in meta.json / overlay
                   summary. Set only in machine-local settings — never commit a
                   real slug.
@@ -189,10 +189,7 @@
               '';
               projectUrl = "https://github.com/heimcloud/credentials";
               githubUrl = "https://github.com/heimcloud/credentials";
-            }
-            # Neo#2 owns publish via getSkillServices → skillsTree + hermes-neo-skills
-            # (AGENTS.md, external_dirs, HERMES_HOME symlink). Explicit true.
-            // lib.neo.mkSkillOptions {enabled = true;};
+            };
         };
         default = {};
         description = "Heimcloud credentials / config-drop importer + Neo SSH public key";
