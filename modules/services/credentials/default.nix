@@ -11,6 +11,13 @@
   }:
     with lib; let
       cfg = config.neo.services.credentials;
+      # customerId is nullOr str (default null). `or` only catches a missing
+      # attribute, not null, so interpolating `cfg.customerId or "<id>"` failed eval
+      # ("cannot coerce null to a string") whenever customerId was unset.
+      customerIdHint =
+        if cfg.customerId == null
+        then "<id>"
+        else toString cfg.customerId;
       howto = ''
         # Heimcloud credentials — register Neo SSH public key
         #
@@ -23,7 +30,7 @@
         # Then (HQ/ops token for now):
         #
         #   export PROVISIONING_API_TOKEN=…
-        #   node scripts/register-ssh-key.mjs --customer-id ${cfg.customerId or "<id>"} \
+        #   node scripts/register-ssh-key.mjs --customer-id ${customerIdHint} \
         #     --public-key-file ${cfg.credentialsPath}/neo-ssh.pub
         #
         # Rotate by rotating the homeserver key (neo-homeserver-ssh-key rotate)

@@ -17,8 +17,14 @@
         if syncCfg.knownHosts != null
         then pkgs.writeText "gitea-ssh.known_hosts" (syncCfg.knownHosts + "\n")
         else null;
+      # customerRepoSlug is nullOr str: `or` only catches a missing attribute,
+      # not null, so handle null explicitly (sync.enable asserts it is set).
+      slugOrUnset =
+        if cfg.customerRepoSlug == null
+        then "UNSET"
+        else cfg.customerRepoSlug;
       # ssh://git@host:port/customers/<slug>.git — slug from machine-local settings only.
-      gitUrl = "ssh://${syncCfg.remoteUser}@${syncCfg.remoteHost}:${toString syncCfg.remotePort}/customers/${cfg.customerRepoSlug or "UNSET"}.git";
+      gitUrl = "ssh://${syncCfg.remoteUser}@${syncCfg.remoteHost}:${toString syncCfg.remotePort}/customers/${slugOrUnset}.git";
       statusFile = "${cfg.credentialsPath}/sync-status";
     in {
       config = mkIf (cfg.enabled && syncCfg.enable) {
