@@ -210,7 +210,7 @@
               echo "| \`swag/email.txt\` | \`neo.services.swag.email\` | plain text |"
               echo "| \`backup/settings.env\` | \`neo.services.backup\` | HOST→host, USER→user, SSH_KEY_PATH→sshKey (mkSshConnectionOptions) |"
               echo "| \`hermes/llm.env\` | \`neo.services.hermes.llm\` | PROVIDER→provider, API_KEY→apiKey, MODEL→model (**core** Hermes) |"
-              echo "| \`ops/ingest.token\` | appdata credentials/ops | skill **heimcloud-ops-ingest** Bearer |"
+              echo "| \`ops/ingest.token\` | appdata credentials/ops | reporter.neo Bearer (skill **heimcloud-ops-ingest**) |"
               echo
               echo "## Detected drop"
               if [ -f "$DROP/layout_version" ]; then

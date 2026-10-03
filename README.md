@@ -5,7 +5,8 @@ The plugin syncs secrets into appdata (mode `0600`) and documents `neo.services.
 `settings.toml` (**hybrid C**). It does **not** invent parallel entitlement stub services.
 
 Heimcloud-specific pieces: `ops/ingest.token` + Neo SSH public-key register/rotate.
-Hermes skill name **`heimcloud-ops-ingest`** stays stable.
+Incident reporting is provided by [reporter.neo](https://github.com/heimcloud/reporter.neo),
+which this plugin imports and configures; the Hermes skill name **`heimcloud-ops-ingest`** stays stable.
 
 **Repos are always private.** Access is a **read-only Gitea deploy key** from the customer Neo SSH **public** key. No real secrets in this public flake.
 
@@ -220,8 +221,7 @@ modules/services/credentials/
   option.nix              # Neo options (+ ops.autofixForkPushToken) + sync/import knobs
   default.nix             # SSH pubkey oneshot + config-drop importer (hybrid C)
   autofix-github.nix      # Runtime materialize + heimcloud-autofix-env wrapper
-  skills.nix              # Hermes skill heimcloud-ops-ingest (skill.conf; Neo#2 publishes)
-  supervise-preload.nix   # Override neo-hermes-supervise with -s heimcloud-ops-ingest
+  reporter.nix            # Imports reporter.neo; mkDefault endpoint/token/meta/skill name
 provisioner/    # Heimcloud-side job worker (not a Neo service)
               # run.mjs, attach-key.mjs, sync-deploy-keys.mjs
 scripts/register-ssh-key.mjs
@@ -313,7 +313,15 @@ Heimcloud ops collects Neo update/activate failures from customer machines via:
    - `ops/ingest.token` — single-line bearer (mode `0600`); **never** paste into chat
    - `meta.json` — `repo_slug` / optional `ops_ingest_url`
    - `neo-credentials-overlay.md` — mapping notes for the operator
-5. With credentials + Hermes enabled (`superviseUpdates`), `skill.enabled = true` lets Neo#2 `getSkillServices` → `skillsTree` / `hermes-neo-skills` own the single publish path (AGENTS.md, `external_dirs`, `HERMES_HOME` symlink). Heimcloud replaces stock `neo-hermes-supervise` so each non-noop supervise run is `hermes chat … -s heimcloud-ops-ingest`, which preloads this skill into the system prompt. On **broken**, Hermes must POST JSON with `Authorization: Bearer $(cat …/ops/ingest.token)`.
+5. With credentials enabled, this plugin imports **reporter.neo** and sets (all `mkDefault`, override under `[services.reporter]`):
+   - `enabled = true`
+   - `endpoint = "https://ops.heimcloud.site/api/incidents"`
+   - `tokenFile = "<credentialsPath>/ops/ingest.token"`
+   - `overridesFile = "<credentialsPath>/meta.json"` (`ops_ingest_url` / `repo_slug` override at report time)
+   - `reporterId = customerRepoSlug` (when set)
+   - `skillName = "heimcloud-ops-ingest"`
+
+   With Hermes `superviseUpdates`, reporter.neo replaces the stock `neo-hermes-supervise` ExecStart with `neo-reporter-supervise`, which runs `hermes chat … -s heimcloud-ops-ingest` so the skill is preloaded into the system prompt. On **broken**, Hermes files the incident with `neo-incident-report` (Bearer read from the token file; a missing token or a `replace-…` placeholder means notify only, no POST). Listing `github:heimcloud/reporter.neo` in core plugins as well is harmless (deduplicated).
 
 Lab machines already have private repos under `customers/<repo_slug>`. Customer slugs are secrets: they live only in the Ops/Credentials environment and on the machine, never in any GitHub repo, PR, commit message, or CI log.
 

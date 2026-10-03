@@ -7,6 +7,15 @@
   }:
     with lib;
     with {inherit (lib.neo) mkOption mkEnableOption;}; {
+      # The Hermes skill moved to reporter.neo (neo.services.reporter.skill).
+      # A leftover [services.credentials.skill] in settings.toml would otherwise
+      # fail evaluation ("option does not exist") and stop auto-updates; keep a
+      # hidden catch-all and warn instead.
+      config.warnings = lib.optional (config.neo.services.credentials.skill != {}) ''
+        neo.services.credentials.skill is ignored: the heimcloud-ops-ingest skill
+        is now provided by reporter.neo. Use [services.reporter.skill] instead and
+        delete [services.credentials.skill] from settings.toml.
+      '';
       options.neo.services.credentials = mkOption {
         type = types.submodule {
           options =
@@ -52,12 +61,19 @@
                 default = null;
                 description = ''
                   Private Gitea repo slug under `customers/<slug>` (Shop Crockford
-                  base32 id). Used by Hermes skill heimcloud-ops-ingest, the
+                  base32 id). Sent as the incident reporter id (reporter.neo), the
                   optional sync timer, and documented in meta.json / overlay
                   summary. Set only in machine-local settings — never commit a
                   real slug.
                 '';
                 rank = 25;
+              };
+              skill = lib.mkOption {
+                type = types.attrsOf types.anything;
+                default = {};
+                internal = true;
+                visible = false;
+                description = "Removed: the Hermes skill is provided by reporter.neo (services.reporter.skill). Any key here is ignored with a warning.";
               };
               shopBaseUrl = mkOption {
                 type = types.str;
@@ -189,10 +205,7 @@
               '';
               projectUrl = "https://github.com/heimcloud/credentials";
               githubUrl = "https://github.com/heimcloud/credentials";
-            }
-            # Neo#2 owns publish via getSkillServices → skillsTree + hermes-neo-skills
-            # (AGENTS.md, external_dirs, HERMES_HOME symlink). Explicit true.
-            // lib.neo.mkSkillOptions {enabled = true;};
+            };
         };
         default = {};
         description = "Heimcloud credentials / config-drop importer + Neo SSH public key";
