@@ -137,9 +137,21 @@ path). Repos stay private; never touch **agwanti**.
 The fork-push token for the autofix loop is no longer handled here. It is
 configured on the autofix host through
 [autofix.neo](https://github.com/heimcloud/autofix.neo):
-`[services.autofix.github] tokenFile = "…"` (or `token`). The old key
-`services.credentials.ops.autofixForkPushToken` is removed and now fails
-evaluation with a pointer to the new option.
+`[services.autofix.github] tokenFile = "…"` (or `token`).
+
+This plugin no longer reads `services.credentials.ops`. Any key left under
+`[services.credentials.ops]` (including the old `autofixForkPushToken`) is
+ignored and evaluation only shows a **warning** naming the leftover keys (never
+their values) with a pointer to the new option; it never fails evaluation or
+auto-updates. Delete the section from settings.toml once the autofix host uses
+autofix.neo: it still holds the token.
+
+After the cutover, remove the stale token copy this plugin used to materialize
+(tmpfs, so a reboot also clears it):
+
+```bash
+sudo rm -rf /run/heimcloud-autofix
+```
 
 ## Plugin layout
 
