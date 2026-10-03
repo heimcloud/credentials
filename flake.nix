@@ -18,6 +18,9 @@
     reporter = {
       url = "github:heimcloud/reporter.neo/v0.1.0";
       inputs = {
+        flake-file.follows = "flake-file";
+        flake-parts.follows = "flake-parts";
+        import-tree.follows = "import-tree";
         neo.follows = "neo";
         nixpkgs.follows = "nixpkgs";
       };
