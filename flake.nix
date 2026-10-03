@@ -16,7 +16,7 @@
     };
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     reporter = {
-      url = "github:heimcloud/reporter.neo/v0.1.0";
+      url = "github:heimcloud/reporter.neo/v0.1.2";
       inputs = {
         flake-file.follows = "flake-file";
         flake-parts.follows = "flake-parts";

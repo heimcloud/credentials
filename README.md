@@ -321,7 +321,7 @@ Heimcloud ops collects Neo update/activate failures from customer machines via:
    - `reporterId = customerRepoSlug` (when set)
    - `skillName = "heimcloud-ops-ingest"`
 
-   With Hermes `superviseUpdates`, reporter.neo replaces the stock `neo-hermes-supervise` ExecStart with `neo-reporter-supervise`, which runs `hermes chat … -s heimcloud-ops-ingest` so the skill is preloaded into the system prompt. On **broken**, Hermes files the incident with `neo-incident-report` (Bearer read from the token file; a missing token or a `replace-…` placeholder means notify only, no POST). Listing `github:heimcloud/reporter.neo` in core plugins as well is harmless (deduplicated).
+   With Hermes `superviseUpdates`, reporter.neo replaces the stock `neo-hermes-supervise` ExecStart with `neo-reporter-supervise`, which runs `hermes chat … -s heimcloud-ops-ingest` so the skill is preloaded into the system prompt. On **broken**, Hermes files the incident with `send-report` (reporter.neo v0.1.2). `send-report` talks to a socket-activated, sandboxed service that holds the Bearer token, which root stages from `ops/ingest.token` as a 0400 root-only credential. Neither hermes nor any other user can read it. A missing token or a `replace-…` placeholder means notify only, no POST. Any local user (operators, the Hermes gateway) can run `send-report "text"` too. Listing `github:heimcloud/reporter.neo` in core plugins as well is harmless (deduplicated).
 
 Lab machines already have private repos under `customers/<repo_slug>`. Customer slugs are secrets: they live only in the Ops/Credentials environment and on the machine, never in any GitHub repo, PR, commit message, or CI log.
 
