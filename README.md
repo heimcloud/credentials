@@ -132,101 +132,25 @@ Labs already use the homeserver `.pub` as the RO deploy key (same attach/rotate
 path). Repos stay private; never touch **agwanti**.
 
 
-## Ops auto-fix GitHub token (opt-in, ops host only)
+## Autofix GitHub token (moved)
 
-Optional fine-grained GitHub token so the Hermes Ops auto-fix loop can **push
-fix branches to `heimcloud/neo`**. Customer Neos leave this unset.
-
-### Settings key
-
-```toml
-[services.credentials.ops]
-autofixForkPushToken = "github_pat_…"   # or omit / leave null → feature off
-```
-
-Full option path: `neo.services.credentials.ops.autofixForkPushToken` (default `null`).
-
-### What gets installed
-
-| Piece | Detail |
-|-------|--------|
-| Token file | `/run/heimcloud-autofix/github-token` — tmpfs, file mode `0400`, owner `hermes:hermes` (`services.hermes-agent.{user,group}`) |
-| Token dir | `/run/heimcloud-autofix` — mode `0700`, owner `hermes:hermes`. The tmpfiles rule uses the same owner as the token (tmpfiles re-applies it at boot and on every switch); it falls back to `root` only when the Hermes user/group is not declared, since an unknown user would fail `systemd-tmpfiles`. Materialize also re-chowns/chmods the dir on every run, so a dir left with the wrong owner is repaired |
-| Materialize | Activation script (+ optional `heimcloud-autofix-materialize-token.service`) reads `/etc/neo/settings.toml` at **runtime** and writes the file (never puts the value in unit `Environment=`, never interpolates it into Nix) |
-| Wrapper | `heimcloud-autofix-env <cmd…>` — for the child only: appends to `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` `credential."https://github.com/heimcloud/".helper` (reset, then the helper's store path) + `credential."https://github.com/heimcloud/".useHttpPath = true`, and sets `GH_TOKEN` from the token file. The caller's own git config (`~/.gitconfig` identity etc.) is kept |
-| Helper | `heimcloud-autofix-git-credential` — git credential helper that reads the token file |
-| Check | `heimcloud-autofix-env --check` → exit `0` only if the token file is present/non-empty/readable **and**, under the wrapper, `git config --get-urlmatch credential.helper https://github.com/heimcloud/neo` resolves to the helper and `git credential fill` (`path=heimcloud/neo.git`) returns a non-empty password (never printed). Otherwise `1` — silently when there is no token (feature off), with a one-line reason on stderr for a git/helper problem |
-
-`nix.conf` `access-tokens`, Hermes `~/.gitconfig`, and `gh` `hosts.yml` are **not** touched. Nix flake fetches, `neo update` / auto-update stay unauthenticated.
-
-### Ops job-queue runner
-
-```bash
-# Triage-only when no token (non-zero --check → skip push / stay triage):
-if heimcloud-autofix-env --check; then
-  heimcloud-autofix-env hermes --yolo chat -Q --source tool --max-turns 40     -s heimcloud-ops-fix --query-file "$prompt"
-else
-  # no fork-push token → triage path only; do not fail the worker
-  hermes --yolo chat -Q … -s heimcloud-ops-triage …
-fi
-```
-
-When the key is missing/null: no token file, wrapper still runs the command
-without credentials, `--check` is non-zero. Activation **never** fails for a
-missing token (or a missing `hermes` user/group); any unexpected materialize
-error is logged as a warning and exits `0` (triage-only). Materialize is
-idempotent and only touches `github-token` (never the reserved `pr-token`).
-A token file the caller cannot read counts as absent (`--check` non-zero).
-
-### Token scope (recommended)
-
-Create a **fine-grained** personal access token (heimcloud account) with:
-
-- Resource: **`heimcloud/neo` only** (no access to `heimcloud/credentials`)
-- Permission: **`contents: write`** (push fix branches)
-
-A fine-grained token **cannot** open the upstream PR on `madebydamo/neo`
-(cross-owner → 403). Interim flow after a successful push: post a **compare
-link** for Damo to open the PR himself. (`pull_requests: write` on the fork
-does not help for upstream.)
-
-Prefer a fine-grained token over an account SSH key: an account SSH key could
-push to `heimcloud/credentials` **main** (production).
-
-`gh` itself cannot path-scope a token — the real limit is the fine-grained
-token’s repository selection. The git credential helper is path-scoped to
-`https://github.com/heimcloud/` via `GIT_CONFIG_*` environment config, only for
-the wrapped child; other owners/hosts never reach it.
-
-### Future: upstream PR credential
-
-A later **GitHub App** (`heimcloud-autofix`) may add a second credential for
-opening PRs on `madebydamo/neo`. The wrapper already reserves
-`/run/heimcloud-autofix/pr-token` → `GH_PR_TOKEN` for that child process when
-present and readable (unreadable/empty is ignored); App/JWT support is **not** implemented yet. Callers can keep using
-`heimcloud-autofix-env` unchanged.
-
-### Store / logs / Environment
-
-Neo’s homeserver template evaluates `settings.toml` with `builtins.fromTOML`
-and installs `/etc/neo/settings.toml` from the store (mode `0600`). This plugin
-**does not** reference `cfg.ops.autofixForkPushToken` in any derivation text,
-so the value is not copied into unit scripts or `Environment=`. Materialize
-extracts the key at runtime (`set +x`, no journal echo of the secret).
+The fork-push token for the autofix loop is no longer handled here. It is
+configured on the autofix host through
+[autofix.neo](https://github.com/heimcloud/autofix.neo):
+`[services.autofix.github] tokenFile = "…"` (or `token`). The old key
+`services.credentials.ops.autofixForkPushToken` is removed and now fails
+evaluation with a pointer to the new option.
 
 ## Plugin layout
 
 ```
 modules/services/credentials/
-  option.nix              # Neo options (+ ops.autofixForkPushToken) + sync/import knobs
+  option.nix              # Neo options + sync/import knobs
   default.nix             # SSH pubkey oneshot + config-drop importer (hybrid C)
-  autofix-github.nix      # Runtime materialize + heimcloud-autofix-env wrapper
   reporter.nix            # Imports reporter.neo; mkDefault endpoint/token/meta/skill name
 provisioner/    # Heimcloud-side job worker (not a Neo service)
               # run.mjs, attach-key.mjs, sync-deploy-keys.mjs
 scripts/register-ssh-key.mjs
-scripts/autofix/          # extract-token, git-credential helper, env wrapper, materialize
-                          # package.nix builds them (module + test-local.sh share it)
 docs/ssh-access-design.md
 docs/config-drop-design.md
 ```
