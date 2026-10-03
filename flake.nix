@@ -16,7 +16,7 @@
     };
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     reporter = {
-      url = "github:heimcloud/reporter.neo";
+      url = "github:heimcloud/reporter.neo/v0.1.0";
       inputs = {
         neo.follows = "neo";
         nixpkgs.follows = "nixpkgs";

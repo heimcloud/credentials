@@ -7,6 +7,15 @@
   }:
     with lib;
     with {inherit (lib.neo) mkOption mkEnableOption;}; {
+      # The Hermes skill moved to reporter.neo (neo.services.reporter.skill).
+      # A leftover [services.credentials.skill] in settings.toml would otherwise
+      # fail evaluation ("option does not exist") and stop auto-updates; keep a
+      # hidden catch-all and warn instead.
+      config.warnings = lib.optional (config.neo.services.credentials.skill != {}) ''
+        neo.services.credentials.skill is ignored: the heimcloud-ops-ingest skill
+        is now provided by reporter.neo. Use [services.reporter.skill] instead and
+        delete [services.credentials.skill] from settings.toml.
+      '';
       options.neo.services.credentials = mkOption {
         type = types.submodule {
           options =
@@ -58,6 +67,13 @@
                   real slug.
                 '';
                 rank = 25;
+              };
+              skill = lib.mkOption {
+                type = types.attrsOf types.anything;
+                default = {};
+                internal = true;
+                visible = false;
+                description = "Removed: the Hermes skill is provided by reporter.neo (services.reporter.skill). Any key here is ignored with a warning.";
               };
               shopBaseUrl = mkOption {
                 type = types.str;
