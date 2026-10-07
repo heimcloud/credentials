@@ -7,15 +7,30 @@
   }:
     with lib;
     with {inherit (lib.neo) mkOption mkEnableOption;}; {
-      # The Hermes skill moved to reporter.neo (neo.services.reporter.skill).
-      # A leftover [services.credentials.skill] in settings.toml would otherwise
-      # fail evaluation ("option does not exist") and stop auto-updates; keep a
-      # hidden catch-all and warn instead.
-      config.warnings = lib.optional (config.neo.services.credentials.skill != {}) ''
-        neo.services.credentials.skill is ignored: the heimcloud-ops-ingest skill
-        is now provided by reporter.neo. Use [services.reporter.skill] instead and
-        delete [services.credentials.skill] from settings.toml.
-      '';
+      # Removed options kept as hidden catch-alls, so a leftover key in
+      # settings.toml warns instead of failing evaluation ("option does not
+      # exist" or an assertion would stop auto-updates on that host).
+      # (mkRemovedOptionModule cannot reach into this submodule.)
+      # - skill: the Hermes skill moved to reporter.neo
+      #   (neo.services.reporter.skill).
+      # - ops: autofixForkPushToken moved to autofix.neo; other plugins can
+      #   still probe `cred.ops.<key> or null`. Only key names are shown,
+      #   never values.
+      config.warnings = let
+        cred = config.neo.services.credentials;
+      in
+        lib.optional (cred.skill != {}) ''
+          neo.services.credentials.skill is ignored: the heimcloud-ops-ingest skill
+          is now provided by reporter.neo. Use [services.reporter.skill] instead and
+          delete [services.credentials.skill] from settings.toml.
+        ''
+        ++ lib.optional (cred.ops != {}) ''
+          neo.services.credentials.ops is no longer used by the credentials
+          plugin (found: ${lib.concatStringsSep ", " (lib.attrNames cred.ops)}). The
+          autofix GitHub token belongs to the autofix.neo plugin: set
+          [services.autofix.github] tokenFile (preferred) or token, then delete
+          [services.credentials.ops] from settings.toml (it still holds a secret).
+        '';
       options.neo.services.credentials = mkOption {
         type = types.submodule {
           options =
@@ -163,34 +178,12 @@
                 description = "Optional automatic pull of the private customer credentials repo.";
                 rank = 55;
               };
-              ops = mkOption {
-                type = types.submodule {
-                  options = {
-                    autofixForkPushToken = mkOption {
-                      type = types.nullOr types.str;
-                      default = null;
-                      description = ''
-                        Optional fine-grained GitHub token for the Hermes Ops
-                        auto-fix loop to **push fix branches to heimcloud/neo
-                        only**. Materialized at runtime to
-                        `/run/heimcloud-autofix/github-token` (hermes:hermes,
-                        0400, tmpfs; dir hermes:hermes 0700). This plugin never interpolates the value into
-                        the Nix store, unit Environment=, or journal output.
-                        Null / unset = feature off (triage-only fallback).
-                        Prefer a fine-grained token with contents:write on
-                        heimcloud/neo only — not an account SSH key (which
-                        could push to heimcloud/credentials main).
-                      '';
-                      rank = 10;
-                    };
-                  };
-                };
+              ops = lib.mkOption {
+                type = types.attrsOf types.anything;
                 default = {};
-                description = ''
-                  Heimcloud Ops host settings (auto-fix GitHub credentials).
-                  Customer Neos leave this empty.
-                '';
-                rank = 60;
+                internal = true;
+                visible = false;
+                description = "Removed (autofix token moved to autofix.neo). Any key here is ignored; evaluation shows a warning naming the keys (never values).";
               };
             }
             // lib.neo.mkAppdata "${config.neo.core.volumes.appdata}/credentials"
